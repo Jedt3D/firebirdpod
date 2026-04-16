@@ -56,6 +56,15 @@ Primary implementation repository for the Firebird-native Serverpod backend.
   - explicit Serverpod transaction bridging
   - Serverpod-facing database-result wrapping
   - Firebird transaction savepoints and runtime parameters through the Serverpod wrapper
+- Phase 02 Slice 02C generated Serverpod reads for:
+  - `find(...)`
+  - `findFirstRow(...)`
+  - `findById(...)`
+  - `count(...)`
+  - Firebird-native identifier rendering
+  - Firebird-native `OFFSET ... FETCH ...` pagination
+  - single-table generated read locking through `FOR UPDATE WITH LOCK`
+  - model row materialization through the Serverpod serialization manager
 - Live prototype transport using the local `fbdb` package that proves:
   - real `fbclient` attachment
   - prepared statement execution through the seam
@@ -148,6 +157,10 @@ rejected by the local Firebird environment.
 
 The pooled-reset integration test follows the same policy and uses dedicated
 tables inside the shared Firebird test database.
+
+The first generated read-path suite follows the same serial live-suite policy
+and currently stays within single-table reads. Includes and relation-aware
+generated queries remain a later slice.
 
 ## TODO
 
