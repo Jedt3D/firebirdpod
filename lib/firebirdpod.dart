@@ -13,6 +13,8 @@ export 'src/runtime/firebird_statement.dart';
 export 'src/runtime/firebird_transaction.dart';
 export 'src/runtime/firebird_transaction_settings.dart';
 export 'src/runtime/firebird_value_types.dart';
+export 'src/schema/firebird_serverpod_default_value.dart';
+export 'src/schema/firebird_serverpod_sql_generator.dart';
 export 'src/serverpod/firebird_serverpod_analyzer.dart';
 export 'src/serverpod/firebird_serverpod_config.dart';
 export 'src/serverpod/firebird_serverpod_connection.dart';

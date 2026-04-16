@@ -89,6 +89,15 @@ Primary implementation repository for the Firebird-native Serverpod backend.
   - a minimal Firebird-backed Serverpod app proof against `employee.fdb`
     through a real `Serverpod` object, `Session`, hand-wired endpoint
     dispatch, and a proof-only `pod.start()` bootstrap on the sample database
+- Phase 03 Slice 03A schema-generation baseline for:
+  - Firebird-native schema-definition SQL from `DatabaseDefinition`
+  - Firebird-native migration SQL from `DatabaseMigration`
+  - identity-column, default-value, foreign-key, and index rendering owned in
+    `firebirdpod`
+  - guarded `createTableIfNotExists` via Firebird `EXECUTE BLOCK`
+  - deterministic unit coverage for supported SQL generation
+  - explicit rejection of unsupported first-slice features such as non-public
+    schemas, tablespaces, vector types, partial indexes, and UUID v7 defaults
 - Live prototype transport using the local `fbdb` package that proves:
   - real `fbclient` attachment
   - prepared statement execution through the seam
