@@ -53,103 +53,137 @@ void main() {
       ).connect();
       addTearDown(connection.close);
 
-      final result = await connection.execute(
-        r'''
+      final result = await connection.execute(r'''
         insert into FIREBIRDPOD_INSERT_TEST (NAME)
         values ($1)
         returning ID
-        ''',
-        parameters: FirebirdStatementParameters.positional(['alpha']),
-      );
+        ''', parameters: FirebirdStatementParameters.positional(['alpha']));
 
       expect(result.singleRow?['ID'], 1);
       expect(result.generatedId(), 1);
     });
 
-    test('server-side failures are mapped to FirebirdDatabaseException', () async {
-      if (!shouldRunDirectIntegrationTests()) {
-        return;
-      }
+    test(
+      'server-side failures are mapped to FirebirdDatabaseException',
+      () async {
+        if (!shouldRunDirectIntegrationTests()) {
+          return;
+        }
 
-      final connection = await buildDirectEndpoint(
-        database: firebirdTestDatabasePath(),
-      ).connect();
-      addTearDown(connection.close);
+        final connection = await buildDirectEndpoint(
+          database: firebirdTestDatabasePath(),
+        ).connect();
+        addTearDown(connection.close);
 
-      await connection.execute(
-        r'''
+        await connection.execute(r'''
         insert into FIREBIRDPOD_INSERT_TEST (NAME)
         values ($1)
-        ''',
-        parameters: FirebirdStatementParameters.positional(['duplicate']),
-      );
+        ''', parameters: FirebirdStatementParameters.positional(['duplicate']));
 
-      await expectLater(
-        () => connection.execute(
-          r'''
+        await expectLater(
+          () => connection.execute(
+            r'''
           insert into FIREBIRDPOD_INSERT_TEST (NAME)
           values ($1)
           ''',
-          parameters: FirebirdStatementParameters.positional(['duplicate']),
-        ),
-        throwsA(
-          isA<FirebirdDatabaseException>()
-              .having((error) => error.operation, 'operation', 'execute')
-              .having((error) => error.message, 'message', isNotEmpty)
-              .having(
-                (error) => error.primaryErrorCode,
-                'primaryErrorCode',
-                isNotNull,
-              )
-              .having((error) => error.errorCodes, 'errorCodes', isNotEmpty),
-        ),
-      );
-    });
+            parameters: FirebirdStatementParameters.positional(['duplicate']),
+          ),
+          throwsA(
+            isA<FirebirdDatabaseException>()
+                .having((error) => error.operation, 'operation', 'execute')
+                .having((error) => error.message, 'message', isNotEmpty)
+                .having(
+                  (error) => error.primaryErrorCode,
+                  'primaryErrorCode',
+                  isNotNull,
+                )
+                .having((error) => error.errorCodes, 'errorCodes', isNotEmpty),
+          ),
+        );
+      },
+    );
 
-    test('statement timeout surfaces as a timeout-mapped database exception', () async {
-      if (!shouldRunDirectIntegrationTests()) {
-        return;
-      }
+    test(
+      'statement timeout surfaces as a timeout-mapped database exception',
+      () async {
+        if (!shouldRunDirectIntegrationTests()) {
+          return;
+        }
 
-      final connection = await buildDirectEndpoint(
-        database: firebirdTestDatabasePath(),
-      ).connect();
-      addTearDown(connection.close);
+        final connection = await buildDirectEndpoint(
+          database: firebirdTestDatabasePath(),
+        ).connect();
+        addTearDown(connection.close);
 
-      await expectLater(
-        () => connection.execute(
-          '''
+        await expectLater(
+          () => connection.execute('''
           select count(*)
           from rdb\$types a
           cross join rdb\$types b
           cross join rdb\$types c
           cross join rdb\$types d
           cross join rdb\$types e
-          ''',
-          timeout: const Duration(milliseconds: 20),
-        ),
-        throwsA(
-          isA<FirebirdDatabaseException>().having(
-            (error) => error.isTimeout,
-            'isTimeout',
-            isTrue,
+          ''', timeout: const Duration(milliseconds: 20)),
+          throwsA(
+            isA<FirebirdDatabaseException>().having(
+              (error) => error.isTimeout,
+              'isTimeout',
+              isTrue,
+            ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
 
-    test('blob and richer Firebird 5 values round-trip through the adapter', () async {
-      if (!shouldRunDirectIntegrationTests()) {
-        return;
-      }
+    test(
+      'connection statement timeout round-trips in milliseconds on the direct adapter',
+      () async {
+        if (!shouldRunDirectIntegrationTests()) {
+          return;
+        }
 
-      final connection = await buildDirectEndpoint(
-        database: firebirdTestDatabasePath(),
-      ).connect();
-      addTearDown(connection.close);
+        final connection = await buildDirectEndpoint(
+          database: firebirdTestDatabasePath(),
+        ).connect();
+        addTearDown(connection.close);
 
-      final result = await connection.execute(
-        r'''
+        expect(await connection.getStatementTimeout(), isNull);
+        expect(await _attachmentTimeoutFromSystemContext(connection), 0);
+
+        await connection.setStatementTimeout(const Duration(milliseconds: 250));
+        expect(
+          await connection.getStatementTimeout(),
+          const Duration(milliseconds: 250),
+        );
+        expect(await _attachmentTimeoutFromSystemContext(connection), 250);
+
+        await connection.setStatementTimeout(const Duration(milliseconds: 90));
+        expect(
+          await connection.getStatementTimeout(),
+          const Duration(milliseconds: 90),
+        );
+        expect(await _attachmentTimeoutFromSystemContext(connection), 90);
+
+        await connection.setStatementTimeout(null);
+        expect(await connection.getStatementTimeout(), isNull);
+        expect(await _attachmentTimeoutFromSystemContext(connection), 0);
+      },
+    );
+
+    test(
+      'blob and richer Firebird 5 values round-trip through the adapter',
+      () async {
+        if (!shouldRunDirectIntegrationTests()) {
+          return;
+        }
+
+        final connection = await buildDirectEndpoint(
+          database: firebirdTestDatabasePath(),
+        ).connect();
+        addTearDown(connection.close);
+
+        final result = await connection.execute(
+          r'''
         select
           cast($1 as blob sub_type text) as text_blob,
           cast($2 as blob sub_type binary) as binary_blob,
@@ -161,48 +195,66 @@ void main() {
           cast($8 as timestamp with time zone) as created_at
         from rdb$database
         ''',
-        parameters: FirebirdStatementParameters.positional([
-          'hello firebird',
-          Uint8List.fromList([1, 2, 3, 4]),
-          BigInt.parse('12345678901234567890'),
-          const FirebirdDecimal('12345678901234567890.1234'),
-          const FirebirdDecimal('12345.6789'),
-          const FirebirdDecimal('12345678901234567890123456789012.5'),
-          const FirebirdTimeWithTimeZone(
-            hour: 14,
-            minute: 15,
-            second: 16,
-            millisecond: 17,
-            tenthMillisecond: 2,
-          ),
-          const FirebirdTimestampWithTimeZone(
-            year: 2025,
-            month: 4,
-            day: 16,
-            hour: 14,
-            minute: 15,
-            second: 16,
-            millisecond: 17,
-            tenthMillisecond: 2,
-          ),
-        ]),
-      );
+          parameters: FirebirdStatementParameters.positional([
+            'hello firebird',
+            Uint8List.fromList([1, 2, 3, 4]),
+            BigInt.parse('12345678901234567890'),
+            const FirebirdDecimal('12345678901234567890.1234'),
+            const FirebirdDecimal('12345.6789'),
+            const FirebirdDecimal('12345678901234567890123456789012.5'),
+            const FirebirdTimeWithTimeZone(
+              hour: 14,
+              minute: 15,
+              second: 16,
+              millisecond: 17,
+              tenthMillisecond: 2,
+            ),
+            const FirebirdTimestampWithTimeZone(
+              year: 2025,
+              month: 4,
+              day: 16,
+              hour: 14,
+              minute: 15,
+              second: 16,
+              millisecond: 17,
+              tenthMillisecond: 2,
+            ),
+          ]),
+        );
 
-      final row = result.singleRow!;
-      expect(row['TEXT_BLOB'], 'hello firebird');
-      expect(row['BINARY_BLOB'], Uint8List.fromList([1, 2, 3, 4]));
-      expect(row['HUGE_INT'], BigInt.parse('12345678901234567890'));
-      expect(
-        row['SCALED_NUM'],
-        const FirebirdDecimal('12345678901234567890.1234'),
-      );
-      expect(row['DEC16_VALUE'], const FirebirdDecimal('12345.6789'));
-      expect(
-        row['DEC34_VALUE'],
-        const FirebirdDecimal('12345678901234567890123456789012.5'),
-      );
-      expect(row['EVENT_TIME'], isA<FirebirdTimeWithTimeZone>());
-      expect(row['CREATED_AT'], isA<FirebirdTimestampWithTimeZone>());
-    });
+        final row = result.singleRow!;
+        expect(row['TEXT_BLOB'], 'hello firebird');
+        expect(row['BINARY_BLOB'], Uint8List.fromList([1, 2, 3, 4]));
+        expect(row['HUGE_INT'], BigInt.parse('12345678901234567890'));
+        expect(
+          row['SCALED_NUM'],
+          const FirebirdDecimal('12345678901234567890.1234'),
+        );
+        expect(row['DEC16_VALUE'], const FirebirdDecimal('12345.6789'));
+        expect(
+          row['DEC34_VALUE'],
+          const FirebirdDecimal('12345678901234567890123456789012.5'),
+        );
+        expect(row['EVENT_TIME'], isA<FirebirdTimeWithTimeZone>());
+        expect(row['CREATED_AT'], isA<FirebirdTimestampWithTimeZone>());
+      },
+    );
   });
+}
+
+Future<int> _attachmentTimeoutFromSystemContext(
+  FirebirdConnection connection,
+) async {
+  final result = await connection.execute('''
+    select cast(coalesce(rdb\$get_context('SYSTEM', 'STATEMENT_TIMEOUT'), '0') as bigint) as RESULT_VALUE
+    from rdb\$database
+    ''');
+  final value = result.singleRow?['RESULT_VALUE'];
+  if (value is int) {
+    return value;
+  }
+  if (value is BigInt) {
+    return value.toInt();
+  }
+  throw StateError('Unexpected statement-timeout value type: $value');
 }

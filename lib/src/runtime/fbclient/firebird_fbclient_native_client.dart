@@ -45,7 +45,11 @@ class FirebirdFbClientNativeClient implements FirebirdNativeClient {
     try {
       status.init();
       dpb = util.getXpbBuilder(status, fbclient.IXpbBuilder.dpb);
-      dpb.insertString(status, fbclient.FbConsts.isc_dpb_user_name, options.user);
+      dpb.insertString(
+        status,
+        fbclient.FbConsts.isc_dpb_user_name,
+        options.user,
+      );
       dpb.insertString(
         status,
         fbclient.FbConsts.isc_dpb_password,
@@ -325,15 +329,11 @@ class _FirebirdFbClientNativeConnection implements FirebirdNativeConnection {
   @override
   Future<void> setStatementTimeout(Duration? timeout) async {
     _ensureOpen();
+    final statement = await prepareStatement(_statementTimeoutSql(timeout));
     try {
-      _safeStatusInit(status);
-      attachment.setStatementTimeout(status, timeout?.inMilliseconds ?? 0);
-    } on fbclient.FbStatusException catch (error) {
-      throw mapFbStatusException(
-        exception: error,
-        util: util,
-        operation: 'set statement timeout',
-      );
+      await statement.execute(const <Object?>[]);
+    } finally {
+      await statement.close();
     }
   }
 
@@ -376,8 +376,7 @@ class _FirebirdFbClientNativeConnection implements FirebirdNativeConnection {
 
       final statementType = statement.getType(status);
       final flags = statement.getFlags(status);
-      final hasCursor =
-          (flags & fbclient.IStatement.flagHasCursor) != 0;
+      final hasCursor = (flags & fbclient.IStatement.flagHasCursor) != 0;
 
       return _FirebirdFbClientNativeStatement(
         owner: this,
@@ -439,6 +438,11 @@ class _FirebirdFbClientNativeConnection implements FirebirdNativeConnection {
       );
     }
     return retainedTransaction;
+  }
+
+  String _statementTimeoutSql(Duration? timeout) {
+    final milliseconds = timeout?.inMilliseconds ?? 0;
+    return 'set statement timeout $milliseconds millisecond';
   }
 }
 
@@ -768,7 +772,8 @@ class _FirebirdFbClientNativeStatement implements FirebirdNativeStatement {
         return;
       case fbclient.FbConsts.SQL_TIMESTAMP:
         final dateTime = _requireDateTime(field, value);
-        final timestamp = (message + field.offset).cast<fbclient.IscTimestamp>();
+        final timestamp = (message + field.offset)
+            .cast<fbclient.IscTimestamp>();
         timestamp.ref
           ..date = _owner.util.encodeDate(
             dateTime.year,
@@ -818,10 +823,7 @@ class _FirebirdFbClientNativeStatement implements FirebirdNativeStatement {
     return row;
   }
 
-  Object? _decodeField(
-    Pointer<Uint8> message,
-    _FirebirdFieldDescriptor field,
-  ) {
+  Object? _decodeField(Pointer<Uint8> message, _FirebirdFieldDescriptor field) {
     if (message.readUint16(field.nullOffset) > 0) {
       return null;
     }
@@ -836,13 +838,19 @@ class _FirebirdFbClientNativeStatement implements FirebirdNativeStatement {
         return message.readVarchar(field.offset);
       case fbclient.FbConsts.SQL_SHORT:
         final value = message.readInt16(field.offset);
-        return field.scale == 0 ? value : _decodeScaledNumber(value, field.scale);
+        return field.scale == 0
+            ? value
+            : _decodeScaledNumber(value, field.scale);
       case fbclient.FbConsts.SQL_LONG:
         final value = message.readInt32(field.offset);
-        return field.scale == 0 ? value : _decodeScaledNumber(value, field.scale);
+        return field.scale == 0
+            ? value
+            : _decodeScaledNumber(value, field.scale);
       case fbclient.FbConsts.SQL_INT64:
         final value = message.readInt64(field.offset);
-        return field.scale == 0 ? value : _decodeScaledNumber(value, field.scale);
+        return field.scale == 0
+            ? value
+            : _decodeScaledNumber(value, field.scale);
       case fbclient.FbConsts.SQL_FLOAT:
         return message.readFloat(field.offset);
       case fbclient.FbConsts.SQL_DOUBLE:
@@ -953,9 +961,14 @@ class _FirebirdFbClientNativeStatement implements FirebirdNativeStatement {
       blob = _owner.attachment.createBlob(_owner.status, _transaction, blobId);
       if (blobBytes.isNotEmpty) {
         const segmentLimit = 65535;
-        segmentBuffer =
-            fbclient.mem.allocate<Uint8>(min(segmentLimit, blobBytes.length));
-        for (var offset = 0; offset < blobBytes.length; offset += segmentLimit) {
+        segmentBuffer = fbclient.mem.allocate<Uint8>(
+          min(segmentLimit, blobBytes.length),
+        );
+        for (
+          var offset = 0;
+          offset < blobBytes.length;
+          offset += segmentLimit
+        ) {
           final end = min(offset + segmentLimit, blobBytes.length);
           final segment = blobBytes.sublist(offset, end);
           segmentBuffer.fromDartMem(segment, segment.length, 0, 0);
@@ -999,7 +1012,12 @@ class _FirebirdFbClientNativeStatement implements FirebirdNativeStatement {
     try {
       _safeStatusInit(_owner.status);
       i128.fromStr(_owner.status, field.scale, text, nativeValue);
-      message.fromNativeMem(nativeValue, sizeOf<fbclient.FbI128>(), 0, field.offset);
+      message.fromNativeMem(
+        nativeValue,
+        sizeOf<fbclient.FbI128>(),
+        0,
+        field.offset,
+      );
     } on fbclient.FbStatusException catch (error) {
       throw mapFbStatusException(
         exception: error,
@@ -1024,7 +1042,12 @@ class _FirebirdFbClientNativeStatement implements FirebirdNativeStatement {
     try {
       _safeStatusInit(_owner.status);
       decFloat.fromStr(_owner.status, text, nativeValue);
-      message.fromNativeMem(nativeValue, sizeOf<fbclient.FbDec16>(), 0, field.offset);
+      message.fromNativeMem(
+        nativeValue,
+        sizeOf<fbclient.FbDec16>(),
+        0,
+        field.offset,
+      );
     } on fbclient.FbStatusException catch (error) {
       throw mapFbStatusException(
         exception: error,
@@ -1049,7 +1072,12 @@ class _FirebirdFbClientNativeStatement implements FirebirdNativeStatement {
     try {
       _safeStatusInit(_owner.status);
       decFloat.fromStr(_owner.status, text, nativeValue);
-      message.fromNativeMem(nativeValue, sizeOf<fbclient.FbDec34>(), 0, field.offset);
+      message.fromNativeMem(
+        nativeValue,
+        sizeOf<fbclient.FbDec34>(),
+        0,
+        field.offset,
+      );
     } on fbclient.FbStatusException catch (error) {
       throw mapFbStatusException(
         exception: error,
@@ -1237,7 +1265,11 @@ class _FirebirdFbClientNativeStatement implements FirebirdNativeStatement {
       sizeOf<fbclient.FbDec16>(),
     );
     try {
-      message.toNativeMem(nativeValue, sizeOf<fbclient.FbDec16>(), field.offset);
+      message.toNativeMem(
+        nativeValue,
+        sizeOf<fbclient.FbDec16>(),
+        field.offset,
+      );
       _safeStatusInit(_owner.status);
       return FirebirdDecimal(decFloat.toStr(_owner.status, nativeValue).trim());
     } on fbclient.FbStatusException catch (error) {
@@ -1260,7 +1292,11 @@ class _FirebirdFbClientNativeStatement implements FirebirdNativeStatement {
       sizeOf<fbclient.FbDec34>(),
     );
     try {
-      message.toNativeMem(nativeValue, sizeOf<fbclient.FbDec34>(), field.offset);
+      message.toNativeMem(
+        nativeValue,
+        sizeOf<fbclient.FbDec34>(),
+        field.offset,
+      );
       _safeStatusInit(_owner.status);
       return FirebirdDecimal(decFloat.toStr(_owner.status, nativeValue).trim());
     } on fbclient.FbStatusException catch (error) {
@@ -1397,7 +1433,8 @@ class _FirebirdFbClientNativeStatement implements FirebirdNativeStatement {
         128,
         zoneBuffer.cast(),
       );
-      final nativeValue = (message + field.offset).cast<fbclient.IscTimestampTzEx>();
+      final nativeValue = (message + field.offset)
+          .cast<fbclient.IscTimestampTzEx>();
       return FirebirdTimestampWithTimeZone(
         year: parts[0],
         month: parts[1],

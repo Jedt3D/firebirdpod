@@ -38,12 +38,13 @@ Primary implementation repository for the Firebird-native Serverpod backend.
   - transaction-scoped runtime parameters through Firebird context variables
   - retained-transaction recreation for pooled reuse
   - prepared statement execution without the high-level `FbDb` transport
-  - generated-id extraction from `INSERT ... RETURNING`
-  - structured Firebird exception mapping
-  - connection-level and statement-level timeout control
-  - attachment cancellation entry points
-  - scalar, date, blob, and richer Firebird 5 type decoding
-  - dedicated retained and explicit write-contract coverage for insert, update, delete, and constraint failures
+- generated-id extraction from `INSERT ... RETURNING`
+- structured Firebird exception mapping
+- connection-level and statement-level timeout control
+- connection-level timeout round-trip validated in milliseconds on the direct adapter
+- attachment cancellation entry points
+- scalar, date, blob, and richer Firebird 5 type decoding
+- dedicated retained and explicit write-contract coverage for insert, update, delete, multi-row `RETURNING`, Firebird-native upsert, and constraint failures
 - Live prototype transport using the local `fbdb` package that proves:
   - real `fbclient` attachment
   - prepared statement execution through the seam
@@ -85,6 +86,7 @@ The current direct slice already covers:
 - `TIMESTAMP WITH TIME ZONE`
 - structured timeout-aware error reporting
 - a dedicated write-contract integration suite for ordinary DML behavior
+- Firebird-native upsert and multi-row `RETURNING` validation
 - a monitoring-backed stress suite for repeated serial lifecycle validation
 - repeated pooled-reset stress validation on one worker attachment
 - an explicit-transaction capability suite for savepoints, isolation, and runtime parameters

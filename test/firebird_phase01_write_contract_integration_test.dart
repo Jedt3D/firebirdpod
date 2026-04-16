@@ -79,52 +79,46 @@ void main() {
       }
     });
 
-    test('retained writes report generated ids and affected row counts', () async {
-      if (!shouldRunDirectIntegrationTests()) {
-        return;
-      }
+    test(
+      'retained writes report generated ids and affected row counts',
+      () async {
+        if (!shouldRunDirectIntegrationTests()) {
+          return;
+        }
 
-      final connection = await _openConnection();
-      addTearDown(connection.close);
+        final connection = await _openConnection();
+        addTearDown(connection.close);
 
-      final insertResult = await _insertParent(
-        connection,
-        name: 'alpha',
-        status: 'ACTIVE',
-        score: 10,
-      );
-      expect(insertResult.generatedId(), 1);
-      expect(insertResult.singleRow?['ID'], 1);
-      expect(insertResult.affectedRows, 1);
+        final insertResult = await _insertParent(
+          connection,
+          name: 'alpha',
+          status: 'ACTIVE',
+          score: 10,
+        );
+        expect(insertResult.generatedId(), 1);
+        expect(insertResult.singleRow?['ID'], 1);
+        expect(insertResult.affectedRows, 1);
 
-      final updateResult = await connection.execute(
-        '''
+        final updateResult = await connection.execute('''
         update $_parentTable
         set score = \$1
         where id = \$2
-        ''',
-        parameters: FirebirdStatementParameters.positional([25, 1]),
-      );
-      expect(updateResult.affectedRows, 1);
+        ''', parameters: FirebirdStatementParameters.positional([25, 1]));
+        expect(updateResult.affectedRows, 1);
 
-      final deleteResult = await connection.execute(
-        '''
+        final deleteResult = await connection.execute('''
         delete from $_parentTable
         where id = \$1
-        ''',
-        parameters: FirebirdStatementParameters.positional([1]),
-      );
-      expect(deleteResult.affectedRows, 1);
+        ''', parameters: FirebirdStatementParameters.positional([1]));
+        expect(deleteResult.affectedRows, 1);
 
-      final missingDeleteResult = await connection.execute(
-        '''
+        final missingDeleteResult = await connection.execute('''
         delete from $_parentTable
         where id = \$1
-        ''',
-        parameters: FirebirdStatementParameters.positional([999]),
-      );
-      expect(missingDeleteResult.affectedRows, 0);
-    });
+        ''', parameters: FirebirdStatementParameters.positional([999]));
+        expect(missingDeleteResult.affectedRows, 0);
+      },
+    );
 
     test('retained delete reports multi-row counts correctly', () async {
       if (!shouldRunDirectIntegrationTests()) {
@@ -153,16 +147,204 @@ void main() {
         score: 30,
       );
 
-      final deleteResult = await connection.execute(
-        '''
+      final deleteResult = await connection.execute('''
         delete from $_parentTable
         where status = \$1
-        ''',
-        parameters: FirebirdStatementParameters.positional(['INACTIVE']),
-      );
+        ''', parameters: FirebirdStatementParameters.positional(['INACTIVE']));
       expect(deleteResult.affectedRows, 2);
       expect(await _countRows(connection, _parentTable), 1);
     });
+
+    test(
+      'update returning materializes multiple returned rows on the retained path',
+      () async {
+        if (!shouldRunDirectIntegrationTests()) {
+          return;
+        }
+
+        final connection = await _openConnection();
+        addTearDown(connection.close);
+
+        await _insertParent(
+          connection,
+          name: 'alpha',
+          status: 'ACTIVE',
+          score: 10,
+        );
+        await _insertParent(
+          connection,
+          name: 'bravo',
+          status: 'ACTIVE',
+          score: 20,
+        );
+        await _insertParent(
+          connection,
+          name: 'charlie',
+          status: 'ACTIVE',
+          score: 30,
+        );
+
+        final result = await connection.execute(
+          '''
+          update $_parentTable
+          set status = \$1
+          where score >= \$2
+          returning id, name, status
+          ''',
+          parameters: FirebirdStatementParameters.positional(['ARCHIVED', 20]),
+        );
+
+        final rows = result.rows.toList()
+          ..sort(
+            (left, right) => (left['ID'] as int).compareTo(right['ID'] as int),
+          );
+        expect(rows, hasLength(2));
+        expect(rows[0], containsPair('ID', 2));
+        expect(rows[0], containsPair('NAME', 'bravo'));
+        expect(rows[0], containsPair('STATUS', 'ARCHIVED'));
+        expect(rows[1], containsPair('ID', 3));
+        expect(rows[1], containsPair('NAME', 'charlie'));
+        expect(rows[1], containsPair('STATUS', 'ARCHIVED'));
+
+        final archivedCount = await _selectScalar(
+          connection,
+          '''
+          select count(*) as RESULT_VALUE
+          from $_parentTable
+          where status = \$1
+          ''',
+          ['ARCHIVED'],
+        );
+        expect(archivedCount, 2);
+      },
+    );
+
+    test(
+      'delete returning materializes multiple returned rows on the retained path',
+      () async {
+        if (!shouldRunDirectIntegrationTests()) {
+          return;
+        }
+
+        final connection = await _openConnection();
+        addTearDown(connection.close);
+
+        await _insertParent(
+          connection,
+          name: 'alpha',
+          status: 'ACTIVE',
+          score: 10,
+        );
+        await _insertParent(
+          connection,
+          name: 'bravo',
+          status: 'INACTIVE',
+          score: 20,
+        );
+        await _insertParent(
+          connection,
+          name: 'charlie',
+          status: 'INACTIVE',
+          score: 30,
+        );
+
+        final result = await connection.execute(
+          '''
+          delete from $_parentTable
+          where status = \$1
+          returning id, name
+          ''',
+          parameters: FirebirdStatementParameters.positional(['INACTIVE']),
+        );
+
+        final rows = result.rows.toList()
+          ..sort(
+            (left, right) => (left['ID'] as int).compareTo(right['ID'] as int),
+          );
+        expect(rows, hasLength(2));
+        expect(rows[0], containsPair('ID', 2));
+        expect(rows[0], containsPair('NAME', 'bravo'));
+        expect(rows[1], containsPair('ID', 3));
+        expect(rows[1], containsPair('NAME', 'charlie'));
+        expect(await _countRows(connection, _parentTable), 1);
+      },
+    );
+
+    test(
+      'update or insert returning supports Firebird-native upsert semantics',
+      () async {
+        if (!shouldRunDirectIntegrationTests()) {
+          return;
+        }
+
+        final connection = await _openConnection();
+        addTearDown(connection.close);
+
+        final firstInsert = await connection.execute(
+          '''
+          update or insert into $_parentTable (NAME, STATUS, SCORE)
+          values (\$1, \$2, \$3)
+          matching (NAME)
+          returning id, name, status, score
+          ''',
+          parameters: FirebirdStatementParameters.positional([
+            'alpha',
+            'ACTIVE',
+            10,
+          ]),
+        );
+        expect(firstInsert.singleRow?['ID'], 1);
+        expect(firstInsert.singleRow?['NAME'], 'alpha');
+        expect(firstInsert.singleRow?['STATUS'], 'ACTIVE');
+        expect(firstInsert.singleRow?['SCORE'], 10);
+
+        final updateExisting = await connection.execute(
+          '''
+          update or insert into $_parentTable (NAME, STATUS, SCORE)
+          values (\$1, \$2, \$3)
+          matching (NAME)
+          returning id, name, status, score
+          ''',
+          parameters: FirebirdStatementParameters.positional([
+            'alpha',
+            'ARCHIVED',
+            99,
+          ]),
+        );
+        expect(updateExisting.singleRow?['ID'], 1);
+        expect(updateExisting.singleRow?['NAME'], 'alpha');
+        expect(updateExisting.singleRow?['STATUS'], 'ARCHIVED');
+        expect(updateExisting.singleRow?['SCORE'], 99);
+
+        final secondInsert = await connection.execute(
+          '''
+          update or insert into $_parentTable (NAME, STATUS, SCORE)
+          values (\$1, \$2, \$3)
+          matching (NAME)
+          returning id, name, status, score
+          ''',
+          parameters: FirebirdStatementParameters.positional([
+            'bravo',
+            'ACTIVE',
+            20,
+          ]),
+        );
+        expect(secondInsert.singleRow?['ID'], 2);
+        expect(secondInsert.singleRow?['NAME'], 'bravo');
+
+        final rows = await _selectAllRows(connection, '''
+          select id, name, status, score
+          from $_parentTable
+          order by id
+          ''');
+        expect(rows, hasLength(2));
+        expect(rows[0], containsPair('ID', 1));
+        expect(rows[0], containsPair('STATUS', 'ARCHIVED'));
+        expect(rows[0], containsPair('SCORE', 99));
+        expect(rows[1], containsPair('ID', 2));
+        expect(rows[1], containsPair('NAME', 'bravo'));
+      },
+    );
 
     test('explicit transaction rollback restores deleted rows', () async {
       if (!shouldRunDirectIntegrationTests()) {
@@ -190,22 +372,16 @@ void main() {
       final transaction = await connection.beginTransaction();
       addTearDown(transaction.close);
 
-      final childDelete = await transaction.execute(
-        '''
+      final childDelete = await transaction.execute('''
         delete from $_childTable
         where parent_id = \$1
-        ''',
-        parameters: FirebirdStatementParameters.positional([parentId]),
-      );
+        ''', parameters: FirebirdStatementParameters.positional([parentId]));
       expect(childDelete.affectedRows, 1);
 
-      final parentDelete = await transaction.execute(
-        '''
+      final parentDelete = await transaction.execute('''
         delete from $_parentTable
         where id = \$1
-        ''',
-        parameters: FirebirdStatementParameters.positional([parentId]),
-      );
+        ''', parameters: FirebirdStatementParameters.positional([parentId]));
       expect(parentDelete.affectedRows, 1);
 
       expect(await _countRowsInTransaction(transaction, _childTable), 0);
@@ -255,13 +431,10 @@ void main() {
       );
       expect(updateResult.affectedRows, 1);
 
-      final deleteResult = await transaction.execute(
-        '''
+      final deleteResult = await transaction.execute('''
         delete from $_childTable
         where id = \$1
-        ''',
-        parameters: FirebirdStatementParameters.positional([childId]),
-      );
+        ''', parameters: FirebirdStatementParameters.positional([childId]));
       expect(deleteResult.affectedRows, 1);
 
       await transaction.commit();
@@ -303,73 +476,76 @@ void main() {
       );
     });
 
-    test('server-side write constraint failures surface as structured database exceptions', () async {
-      if (!shouldRunDirectIntegrationTests()) {
-        return;
-      }
+    test(
+      'server-side write constraint failures surface as structured database exceptions',
+      () async {
+        if (!shouldRunDirectIntegrationTests()) {
+          return;
+        }
 
-      final connection = await _openConnection();
-      addTearDown(connection.close);
+        final connection = await _openConnection();
+        addTearDown(connection.close);
 
-      await _insertParent(
-        connection,
-        name: 'alpha',
-        status: 'ACTIVE',
-        score: 10,
-      );
+        await _insertParent(
+          connection,
+          name: 'alpha',
+          status: 'ACTIVE',
+          score: 10,
+        );
 
-      final uniqueError = await _captureDbException(() {
-        return connection.execute(
-          '''
+        final uniqueError = await _captureDbException(() {
+          return connection.execute(
+            '''
           insert into $_parentTable (NAME, STATUS, SCORE)
           values (\$1, \$2, \$3)
           ''',
-          parameters: FirebirdStatementParameters.positional([
-            'alpha',
-            'ACTIVE',
-            11,
-          ]),
-        );
-      });
-      expect(uniqueError.operation, 'execute');
-      expect(uniqueError.message, isNotEmpty);
-      expect(uniqueError.primaryErrorCode, isNotNull);
-      expect(uniqueError.errorCodes, isNotEmpty);
+            parameters: FirebirdStatementParameters.positional([
+              'alpha',
+              'ACTIVE',
+              11,
+            ]),
+          );
+        });
+        expect(uniqueError.operation, 'execute');
+        expect(uniqueError.message, isNotEmpty);
+        expect(uniqueError.primaryErrorCode, isNotNull);
+        expect(uniqueError.errorCodes, isNotEmpty);
 
-      final checkError = await _captureDbException(() {
-        return connection.execute(
-          '''
+        final checkError = await _captureDbException(() {
+          return connection.execute(
+            '''
           insert into $_parentTable (NAME, STATUS, SCORE)
           values (\$1, \$2, \$3)
           ''',
-          parameters: FirebirdStatementParameters.positional([
-            'check-fail',
-            'ACTIVE',
-            -1,
-          ]),
-        );
-      });
-      expect(checkError.operation, 'execute');
-      expect(checkError.message, isNotEmpty);
-      expect(checkError.primaryErrorCode, isNotNull);
+            parameters: FirebirdStatementParameters.positional([
+              'check-fail',
+              'ACTIVE',
+              -1,
+            ]),
+          );
+        });
+        expect(checkError.operation, 'execute');
+        expect(checkError.message, isNotEmpty);
+        expect(checkError.primaryErrorCode, isNotNull);
 
-      final foreignKeyError = await _captureDbException(() {
-        return connection.execute(
-          '''
+        final foreignKeyError = await _captureDbException(() {
+          return connection.execute(
+            '''
           insert into $_childTable (PARENT_ID, LABEL, PAYLOAD)
           values (\$1, \$2, \$3)
           ''',
-          parameters: FirebirdStatementParameters.positional([
-            999,
-            'missing-parent',
-            Uint8List.fromList([9]),
-          ]),
-        );
-      });
-      expect(foreignKeyError.operation, 'execute');
-      expect(foreignKeyError.message, isNotEmpty);
-      expect(foreignKeyError.primaryErrorCode, isNotNull);
-    });
+            parameters: FirebirdStatementParameters.positional([
+              999,
+              'missing-parent',
+              Uint8List.fromList([9]),
+            ]),
+          );
+        });
+        expect(foreignKeyError.operation, 'execute');
+        expect(foreignKeyError.message, isNotEmpty);
+        expect(foreignKeyError.primaryErrorCode, isNotNull);
+      },
+    );
 
     test('delete that violates foreign keys is mapped cleanly', () async {
       if (!shouldRunDirectIntegrationTests()) {
@@ -395,13 +571,10 @@ void main() {
       );
 
       final error = await _captureDbException(() {
-        return connection.execute(
-          '''
+        return connection.execute('''
           delete from $_parentTable
           where id = \$1
-          ''',
-          parameters: FirebirdStatementParameters.positional([parentId]),
-        );
+          ''', parameters: FirebirdStatementParameters.positional([parentId]));
       });
       expect(error.operation, 'execute');
       expect(error.message, isNotEmpty);
@@ -529,6 +702,18 @@ Future<int> _countRows(FirebirdConnection connection, String tableName) async {
   return row['RESULT_TOTAL'] as int;
 }
 
+Future<List<Map<String, Object?>>> _selectAllRows(
+  FirebirdConnection connection,
+  String sql, [
+  List<Object?> values = const <Object?>[],
+]) async {
+  final result = await connection.execute(
+    sql,
+    parameters: FirebirdStatementParameters.positional(values),
+  );
+  return result.rows;
+}
+
 Future<int> _countRowsInTransaction(
   FirebirdTransaction transaction,
   String tableName,
@@ -549,6 +734,15 @@ Future<Map<String, Object?>> _selectSingleRow(
     parameters: FirebirdStatementParameters.positional(values),
   );
   return result.singleRow!;
+}
+
+Future<Object?> _selectScalar(
+  FirebirdConnection connection,
+  String sql, [
+  List<Object?> values = const <Object?>[],
+]) async {
+  final row = await _selectSingleRow(connection, sql, values);
+  return row.values.single;
 }
 
 Future<FirebirdDatabaseException> _captureDbException(
