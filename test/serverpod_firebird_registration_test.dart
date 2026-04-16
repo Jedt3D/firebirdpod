@@ -105,5 +105,35 @@ database:
         );
       },
     );
+
+    test(
+      'rejects pool-level runtime parameters until Firebird has a native mapping',
+      () {
+        registerFirebirdServerpodDialect();
+
+        final provider = DatabaseProvider.forDialect(DatabaseDialect.firebird);
+
+        expect(
+          () => provider.createPoolManager(
+            _TestSerializationManager(),
+            (params) => [params.searchPaths(['app'])],
+            FirebirdServerpodDatabaseConfig(
+              host: '127.0.0.1',
+              port: 3050,
+              user: 'sysdba',
+              password: 'masterkey',
+              name: '/tmp/serverpod-firebird.fdb',
+            ),
+          ),
+          throwsA(
+            isA<UnsupportedError>().having(
+              (error) => error.message,
+              'message',
+              contains('pool-level Serverpod runtime parameters'),
+            ),
+          ),
+        );
+      },
+    );
   });
 }

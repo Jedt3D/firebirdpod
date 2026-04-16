@@ -1,6 +1,7 @@
 import 'package:serverpod_database/serverpod_database.dart';
 
 import '../runtime/fbclient/firebird_fbclient_native_client.dart';
+import '../runtime/firebird_connection.dart';
 import '../runtime/firebird_connection_options.dart';
 import '../runtime/firebird_endpoint.dart';
 import 'firebird_serverpod_config.dart';
@@ -70,13 +71,18 @@ class FirebirdServerpodPoolManager implements DatabasePoolManager {
 
   @override
   Future<bool> testConnection() async {
-    start();
-    final connection = await endpoint.connect();
+    final connection = await connect();
     try {
       lastDatabaseOperationTime = DateTime.now();
       return true;
     } finally {
       await connection.close();
     }
+  }
+
+  /// Opens a Firebird attachment for the current pool-manager configuration.
+  Future<FirebirdConnection> connect() async {
+    start();
+    return endpoint.connect();
   }
 }

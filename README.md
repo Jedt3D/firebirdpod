@@ -50,6 +50,12 @@ Primary implementation repository for the Firebird-native Serverpod backend.
   - Firebird dialect registration
   - Firebird provider and pool-manager creation
   - placeholder Serverpod connection, analyzer, and migration interfaces
+- Phase 02 Slice 02B raw Serverpod execution for:
+  - `query(...)` and `execute(...)`
+  - `simpleQuery(...)` and `simpleExecute(...)` through the current single-statement path
+  - explicit Serverpod transaction bridging
+  - Serverpod-facing database-result wrapping
+  - Firebird transaction savepoints and runtime parameters through the Serverpod wrapper
 - Live prototype transport using the local `fbdb` package that proves:
   - real `fbclient` attachment
   - prepared statement execution through the seam
@@ -118,6 +124,8 @@ The current direct slice already covers:
   application state when pooled connections are reused.
 - `resetForReuse()` is the adapter primitive that future pooled integration
   should call before an attachment becomes idle for the next request.
+- Pool-level Serverpod `runtimeParametersBuilder` is still intentionally unsupported
+  on the Firebird path until we design a Firebird-native equivalent.
 
 ## Current Direct-Test Policy
 

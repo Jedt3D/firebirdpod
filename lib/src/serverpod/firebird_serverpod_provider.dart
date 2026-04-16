@@ -31,6 +31,14 @@ class FirebirdServerpodDatabaseProvider implements DatabaseProvider {
       );
     }
 
+    if (runtimeParametersBuilder != null) {
+      throw UnsupportedError(
+        'Firebird does not support pool-level Serverpod runtime parameters '
+        'yet. Use transaction.setRuntimeParameters(...) on explicit '
+        'transactions until a Firebird-native pool-level mapping exists.',
+      );
+    }
+
     return FirebirdServerpodPoolManager(
       serializationManager,
       runtimeParametersBuilder,
