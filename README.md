@@ -120,6 +120,13 @@ Primary implementation repository for the Firebird-native Serverpod backend.
   - live round-trip integrity proof against generated Firebird schema
   - directional drift reporting for both missing target elements and
     unexpected live elements
+- Phase 03 Slice 03D sample-validation baseline for:
+  - reusable validation of converted and curated Firebird sample databases
+  - a runnable sample-database inventory and gap-report tool
+  - zero-gap gating for the curated native fixture set
+  - compatibility validation for the raw converted sample set
+  - feedback fixes for `DATE`, `TIME`, scaled exact numerics, and
+    `DEFAULT NULL` handling in the analyzer path
 - Live prototype transport using the local `fbdb` package that proves:
   - real `fbclient` attachment
   - prepared statement execution through the seam
@@ -254,9 +261,22 @@ The analyzer suite follows the same live-suite policy and currently proves:
 - `verifyDatabaseIntegrity(...)` fails for a supported drift mismatch and
   reports a usable warning
 
+The sample-database validation suite follows the same live-suite policy and
+currently proves:
+
+- all four converted sample databases stay within the current compatibility
+  budget
+- all four curated native databases stay at zero-gap baseline
+- analyzed sample schemas remain generator-compatible under the current
+  Firebird schema baseline
+
 The runnable proof example lives at:
 
 - `/Users/worajedt/GitHub/FireDart/firebirdpod/example/serverpod_employee_proof.dart`
+
+The runnable sample-validation report lives at:
+
+- `/Users/worajedt/GitHub/FireDart/firebirdpod/tool/firebird_serverpod_sample_database_report.dart`
 
 ## TODO
 

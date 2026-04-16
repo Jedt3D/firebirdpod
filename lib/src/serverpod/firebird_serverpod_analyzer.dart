@@ -10,10 +10,13 @@ import 'package:serverpod_database/serverpod_database.dart';
 /// - indexes
 /// - foreign keys
 ///
-/// Firebird-specific caveat:
-/// `BLOB SUB_TYPE TEXT` does not by itself preserve whether the source column
-/// was modeled as `text` or `json`, so this baseline currently resolves those
-/// columns as `text`.
+/// Firebird-specific caveats:
+///
+/// - `BLOB SUB_TYPE TEXT` does not by itself preserve whether the source
+///   column was modeled as `text` or `json`, so this baseline currently
+///   resolves those columns as `text`.
+/// - Firebird `DATE`, `TIME`, and scaled exact numerics are normalized into
+///   the nearest currently available Serverpod shared type.
 class FirebirdServerpodDatabaseAnalyzer extends DatabaseAnalyzer {
   FirebirdServerpodDatabaseAnalyzer({required super.database});
 
@@ -253,11 +256,18 @@ order by rc.rdb\$constraint_name, seg.rdb\$field_position
     switch (fieldType) {
       case 7:
       case 8:
-        return ColumnType.integer;
+        return (fieldScale == null || fieldScale == 0)
+            ? ColumnType.integer
+            : ColumnType.doublePrecision;
+      case 10:
+        return ColumnType.doublePrecision;
+      case 12:
+      case 13:
+        return ColumnType.timestampWithoutTimeZone;
       case 16:
         return (fieldScale == null || fieldScale == 0)
             ? ColumnType.bigint
-            : ColumnType.unknown;
+            : ColumnType.doublePrecision;
       case 23:
         return ColumnType.boolean;
       case 27:
@@ -305,6 +315,9 @@ order by rc.rdb\$constraint_name, seg.rdb\$field_position
         : normalized;
     final upper = expression.toUpperCase();
 
+    if (upper == 'NULL') {
+      return null;
+    }
     if (upper == 'CURRENT_TIMESTAMP') {
       return defaultDateTimeValueNow;
     }

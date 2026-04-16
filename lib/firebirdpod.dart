@@ -23,6 +23,7 @@ export 'src/serverpod/firebird_serverpod_migration_runner.dart';
 export 'src/serverpod/firebird_serverpod_pool_manager.dart';
 export 'src/serverpod/firebird_serverpod_provider.dart';
 export 'src/serverpod/firebird_serverpod_registration.dart';
+export 'src/serverpod/firebird_serverpod_sample_database_validation.dart';
 export 'src/serverpod/firebird_serverpod_transaction.dart';
 export 'src/serverpod/firebird_serverpod_value_encoder.dart';
 export 'src/sql/compiled_firebird_sql.dart';
