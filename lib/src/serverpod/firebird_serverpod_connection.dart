@@ -1,4 +1,5 @@
 import 'package:serverpod_database/serverpod_database.dart';
+import 'package:serverpod_serialization/serverpod_serialization.dart';
 import 'package:serverpod_shared/serverpod_shared.dart';
 
 import '../runtime/firebird_execution_result.dart';
@@ -9,23 +10,19 @@ import 'firebird_serverpod_pool_manager.dart';
 import 'firebird_serverpod_select_builder.dart';
 import 'firebird_serverpod_transaction.dart';
 
-/// Serverpod database-connection scaffold backed by `firebirdpod`.
+/// Serverpod database connection backed by `firebirdpod`.
 ///
-/// Slice 02A intentionally stops at dialect registration and provider wiring.
-/// The raw query bridge and CRUD implementation land in Slice 02B and later.
+/// The class now covers:
+///
+/// - Slice 02B raw query, execute, and transaction bridging
+/// - Slice 02C generated single-table reads and counts
+/// - Slice 02D generated single-table writes through Firebird `RETURNING`
 class FirebirdServerpodDatabaseConnection
     extends DatabaseConnection<FirebirdServerpodPoolManager> {
   FirebirdServerpodDatabaseConnection(super.poolManager);
 
   @override
   Future<bool> testConnection() => poolManager.testConnection();
-
-  Never _unsupported(String operation) {
-    throw UnsupportedError(
-      'Firebird Serverpod operation "$operation" is not implemented yet. '
-      'This belongs to Phase 02 Slice 02B or later.',
-    );
-  }
 
   @override
   Future<List<T>> find<T extends TableRow>(
@@ -134,7 +131,30 @@ class FirebirdServerpodDatabaseConnection
     required LockMode lockMode,
     required Transaction transaction,
     LockBehavior lockBehavior = LockBehavior.wait,
-  }) async => _unsupported('lockRows');
+  }) async {
+    final table = _getTableOrAssert<T>(operation: 'lockRows');
+
+    _ensureValueEncoderConfigured();
+    _assertSlice02CReadShapeSupported(
+      table: table,
+      where: where,
+      orderBy: null,
+      include: null,
+    );
+
+    final query = FirebirdSelectQueryBuilder(table: table)
+        .withSelectFields([table.id])
+        .withWhere(where)
+        .withLockMode(lockMode, lockBehavior)
+        .build();
+
+    await this.query(
+      session,
+      query,
+      timeoutInSeconds: 60,
+      transaction: transaction,
+    );
+  }
 
   @override
   Future<List<T>> insert<T extends TableRow>(
@@ -142,14 +162,68 @@ class FirebirdServerpodDatabaseConnection
     List<T> rows, {
     Transaction? transaction,
     bool ignoreConflicts = false,
-  }) async => _unsupported('insert');
+  }) async {
+    if (rows.isEmpty) return <T>[];
+    if (ignoreConflicts) {
+      throw UnsupportedError(
+        'Firebird generated insert(ignoreConflicts: true) is not implemented '
+        'yet. Slice 02D keeps conflict-ignore behavior explicit instead of '
+        'inventing a PostgreSQL-style compatibility shim.',
+      );
+    }
+
+    if (rows.length > 1) {
+      return _runInTransactionOrSavepoint(
+        session,
+        transaction,
+        (tx) async => [
+          for (final row in rows)
+            await insert<T>(
+              session,
+              [row],
+              transaction: tx,
+              ignoreConflicts: false,
+            ).then((results) => results.first),
+        ],
+      );
+    }
+
+    final row = rows.single;
+    final table = row.table;
+    final rowJson = Map<String, dynamic>.from(row.toJsonForDatabase() as Map);
+    final statement = _buildInsertStatement(table, rowJson);
+    final resolvedRows = await _queryResolvedRows(
+      session,
+      statement.sql,
+      table: table,
+      transaction: transaction,
+      parameters: statement.parameters,
+    );
+
+    final merged = _mergeResultsWithNonPersistedFields(rows)(resolvedRows);
+    return merged.map(poolManager.serializationManager.deserialize<T>).toList();
+  }
 
   @override
   Future<T> insertRow<T extends TableRow>(
     DatabaseSession session,
     T row, {
     Transaction? transaction,
-  }) async => _unsupported('insertRow');
+  }) async {
+    final result = await insert<T>(
+      session,
+      [row],
+      transaction: transaction,
+    );
+
+    if (result.length != 1) {
+      throw StateError(
+        'Failed to insert row, updated number of rows is ${result.length} != 1.',
+      );
+    }
+
+    return result.first;
+  }
 
   @override
   Future<List<T>> update<T extends TableRow>(
@@ -157,7 +231,53 @@ class FirebirdServerpodDatabaseConnection
     List<T> rows, {
     List<Column>? columns,
     Transaction? transaction,
-  }) async => _unsupported('update');
+  }) async {
+    if (rows.isEmpty) return <T>[];
+    if (rows.any((row) => row.id == null)) {
+      throw ArgumentError.notNull('row.id');
+    }
+
+    if (rows.length > 1) {
+      return _runInTransactionOrSavepoint(
+        session,
+        transaction,
+        (tx) async => [
+          for (final row in rows)
+            await update<T>(
+              session,
+              [row],
+              columns: columns,
+              transaction: tx,
+            ).then((results) => results.first),
+        ],
+      );
+    }
+
+    final row = rows.single;
+    final table = row.table;
+    final selectedColumns = (columns ?? table.managedColumns).toSet();
+    if (columns != null) {
+      _validateColumnsExists(selectedColumns, table.columns.toSet());
+    }
+
+    final rowJson = Map<String, dynamic>.from(row.toJsonForDatabase() as Map);
+    final statement = _buildUpdateRowStatement(
+      table,
+      row.id!,
+      rowJson,
+      selectedColumns,
+    );
+    final resolvedRows = await _queryResolvedRows(
+      session,
+      statement.sql,
+      table: table,
+      transaction: transaction,
+      parameters: statement.parameters,
+    );
+
+    final merged = _mergeResultsWithNonPersistedFields(rows)(resolvedRows);
+    return merged.map(poolManager.serializationManager.deserialize<T>).toList();
+  }
 
   @override
   Future<T> updateRow<T extends TableRow>(
@@ -165,7 +285,20 @@ class FirebirdServerpodDatabaseConnection
     T row, {
     List<Column>? columns,
     Transaction? transaction,
-  }) async => _unsupported('updateRow');
+  }) async {
+    final updated = await update<T>(
+      session,
+      [row],
+      columns: columns,
+      transaction: transaction,
+    );
+
+    if (updated.isEmpty) {
+      throw StateError('Failed to update row, no rows updated.');
+    }
+
+    return updated.first;
+  }
 
   @override
   Future<T> updateById<T extends TableRow>(
@@ -173,7 +306,39 @@ class FirebirdServerpodDatabaseConnection
     Object id, {
     required List<ColumnValue> columnValues,
     Transaction? transaction,
-  }) async => _unsupported('updateById');
+  }) async {
+    final table = _getTableOrAssert<T>(operation: 'updateById');
+    if (columnValues.isEmpty) {
+      throw ArgumentError('columnValues cannot be empty');
+    }
+
+    _validateColumnsExists(
+      columnValues.map((entry) => entry.column).toSet(),
+      table.columns.toSet(),
+    );
+
+    final statement = _buildUpdateColumnValuesStatement(
+      table,
+      whereSql:
+          '${_renderIdentifier(table.id.columnName)} = '
+          '\$${columnValues.length + 1}',
+      columnValues: columnValues,
+      trailingParameters: [id],
+    );
+    final resolvedRows = await _queryResolvedRows(
+      session,
+      statement.sql,
+      table: table,
+      transaction: transaction,
+      parameters: statement.parameters,
+    );
+
+    if (resolvedRows.isEmpty) {
+      throw StateError('Failed to update row, no rows updated.');
+    }
+
+    return poolManager.serializationManager.deserialize<T>(resolvedRows.first);
+  }
 
   @override
   Future<List<T>> updateWhere<T extends TableRow>(
@@ -186,7 +351,86 @@ class FirebirdServerpodDatabaseConnection
     List<Column>? orderByList,
     bool orderDescending = false,
     Transaction? transaction,
-  }) async => _unsupported('updateWhere');
+  }) async {
+    final table = _getTableOrAssert<T>(operation: 'updateWhere');
+    if (columnValues.isEmpty) {
+      throw ArgumentError('columnValues cannot be empty');
+    }
+
+    final orderByCols = _resolveOrderBy(orderByList, orderBy, orderDescending);
+    _ensureValueEncoderConfigured();
+    _assertSlice02CReadShapeSupported(
+      table: table,
+      where: where,
+      orderBy: orderByCols,
+      include: null,
+    );
+    _validateColumnsExists(
+      columnValues.map((entry) => entry.column).toSet(),
+      table.columns.toSet(),
+    );
+
+    final requiresSelectedIds =
+        limit != null || offset != null || orderByCols != null;
+
+    if (!requiresSelectedIds) {
+      final statement = _buildUpdateColumnValuesStatement(
+        table,
+        whereSql: _renderExpression(table, where),
+        columnValues: columnValues,
+      );
+      final resolvedRows = await _queryResolvedRows(
+        session,
+        statement.sql,
+        table: table,
+        transaction: transaction,
+        parameters: statement.parameters,
+      );
+      return resolvedRows
+          .map(poolManager.serializationManager.deserialize<T>)
+          .toList();
+    }
+
+    return _runInTransactionOrSavepoint(
+      session,
+      transaction,
+      (tx) async {
+        final ids = await _selectIdsForMutation(
+          session,
+          table,
+          where: where,
+          limit: limit,
+          offset: offset,
+          orderBy: orderByCols,
+          transaction: tx,
+        );
+        if (ids.isEmpty) return <T>[];
+
+        final statement = _buildUpdateColumnValuesStatement(
+          table,
+          whereSql: _buildIdInClause(table, ids.length, columnValues.length),
+          columnValues: columnValues,
+          trailingParameters: ids,
+        );
+        var resolvedRows = await _queryResolvedRows(
+          session,
+          statement.sql,
+          table: table,
+          transaction: tx,
+          parameters: statement.parameters,
+        );
+        resolvedRows = _restoreSelectionOrder(
+          resolvedRows,
+          table,
+          ids,
+        );
+
+        return resolvedRows
+            .map(poolManager.serializationManager.deserialize<T>)
+            .toList();
+      },
+    );
+  }
 
   @override
   Future<List<T>> delete<T extends TableRow>(
@@ -196,14 +440,41 @@ class FirebirdServerpodDatabaseConnection
     List<Column>? orderByList,
     bool orderDescending = false,
     Transaction? transaction,
-  }) async => _unsupported('delete');
+  }) async {
+    if (rows.isEmpty) return <T>[];
+    if (rows.any((row) => row.id == null)) {
+      throw ArgumentError.notNull('row.id');
+    }
+
+    final table = rows.first.table;
+    return deleteWhere<T>(
+      session,
+      table.id.inSet(rows.map((row) => row.id!).castToIdType().toSet()),
+      orderBy: orderBy,
+      orderByList: orderByList,
+      orderDescending: orderDescending,
+      transaction: transaction,
+    );
+  }
 
   @override
   Future<T> deleteRow<T extends TableRow>(
     DatabaseSession session,
     T row, {
     Transaction? transaction,
-  }) async => _unsupported('deleteRow');
+  }) async {
+    final result = await delete<T>(
+      session,
+      [row],
+      transaction: transaction,
+    );
+
+    if (result.isEmpty) {
+      throw StateError('Failed to delete row, no rows deleted.');
+    }
+
+    return result.first;
+  }
 
   @override
   Future<List<T>> deleteWhere<T extends TableRow>(
@@ -213,7 +484,68 @@ class FirebirdServerpodDatabaseConnection
     List<Column>? orderByList,
     bool orderDescending = false,
     Transaction? transaction,
-  }) async => _unsupported('deleteWhere');
+  }) async {
+    final table = _getTableOrAssert<T>(operation: 'deleteWhere');
+    final orderByCols = _resolveOrderBy(orderByList, orderBy, orderDescending);
+
+    _ensureValueEncoderConfigured();
+    _assertSlice02CReadShapeSupported(
+      table: table,
+      where: where,
+      orderBy: orderByCols,
+      include: null,
+    );
+
+    final requiresSelectedIds =
+        orderByCols != null;
+
+    if (!requiresSelectedIds) {
+      final resolvedRows = await _queryResolvedRows(
+        session,
+        'DELETE FROM ${_renderIdentifier(table.tableName)} '
+        'WHERE ${_renderExpression(table, where)} RETURNING *',
+        table: table,
+        transaction: transaction,
+      );
+      return resolvedRows
+          .map(poolManager.serializationManager.deserialize<T>)
+          .toList();
+    }
+
+    return _runInTransactionOrSavepoint(
+      session,
+      transaction,
+      (tx) async {
+        final ids = await _selectIdsForMutation(
+          session,
+          table,
+          where: where,
+          orderBy: orderByCols,
+          transaction: tx,
+        );
+        if (ids.isEmpty) return <T>[];
+
+        final statement = _GeneratedStatement(
+          sql:
+              'DELETE FROM ${_renderIdentifier(table.tableName)} '
+              'WHERE ${_buildIdInClause(table, ids.length, 0)} RETURNING *',
+          parameters: QueryParameters.positional(ids),
+        );
+        var resolvedRows = await _queryResolvedRows(
+          session,
+          statement.sql,
+          table: table,
+          transaction: tx,
+          parameters: statement.parameters,
+        );
+        resolvedRows = _restoreSelectionOrder(resolvedRows, table, ids);
+
+        return resolvedRows
+            .map(poolManager.serializationManager.deserialize<T>)
+            .toList();
+      },
+    );
+  }
 
   @override
   Future<int> count<T extends TableRow>(
@@ -492,6 +824,240 @@ Current type was $T''');
     return orderByList.asOrderBy();
   }
 
+  void _validateColumnsExists(Set<Column> columns, Set<Column> tableColumns) {
+    final additionalColumns = columns.difference(tableColumns);
+    if (additionalColumns.isNotEmpty) {
+      throw ArgumentError.value(
+        additionalColumns.toList().toString(),
+        'columns',
+        'Columns do not exist in table',
+      );
+    }
+  }
+
+  Future<R> _runInTransactionOrSavepoint<R>(
+    DatabaseSession session,
+    Transaction? transaction,
+    Future<R> Function(Transaction transaction) action,
+  ) async {
+    final firebirdTransaction = _castToFirebirdTransaction(transaction);
+    if (firebirdTransaction == null) {
+      return this.transaction<R>(
+        action,
+        settings: const TransactionSettings(),
+        session: session,
+      );
+    }
+
+    Savepoint? savepoint;
+    try {
+      savepoint = await firebirdTransaction.createSavepoint();
+      final result = await action(firebirdTransaction);
+      await savepoint.release();
+      return result;
+    } catch (_) {
+      await savepoint?.rollback();
+      rethrow;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _queryResolvedRows(
+    DatabaseSession session,
+    String query, {
+    required Table table,
+    required Transaction? transaction,
+    QueryParameters? parameters,
+    int? timeoutInSeconds,
+  }) async {
+    final result = await this.query(
+      session,
+      query,
+      timeoutInSeconds: timeoutInSeconds,
+      transaction: transaction,
+      parameters: parameters,
+    );
+    return result
+        .map((row) => _resolveSingleTableRow(table, row.toColumnMap()))
+        .toList();
+  }
+
+  _GeneratedStatement _buildInsertStatement(
+    Table table,
+    Map<String, dynamic> rowJson,
+  ) {
+    final columns = <String>[];
+    final values = <String>[];
+    final parameters = <Object?>[];
+
+    for (final column in table.columns) {
+      final rawValue = rowJson[column.columnName];
+      final omitIdentityId =
+          column.columnName == table.id.columnName &&
+          rawValue == null &&
+          column.hasDefault;
+      if (omitIdentityId) continue;
+
+      columns.add(_renderIdentifier(column.columnName));
+      if (rawValue == null && column.hasDefault) {
+        values.add('DEFAULT');
+      } else {
+        parameters.add(_normalizeMutationValue(column, rawValue));
+        values.add('\$${parameters.length}');
+      }
+    }
+
+    if (columns.isEmpty) {
+      return _GeneratedStatement(
+        sql:
+            'INSERT INTO ${_renderIdentifier(table.tableName)} '
+            'DEFAULT VALUES RETURNING *',
+      );
+    }
+
+    return _GeneratedStatement(
+      sql:
+          'INSERT INTO ${_renderIdentifier(table.tableName)} '
+          '(${columns.join(', ')}) VALUES (${values.join(', ')}) RETURNING *',
+      parameters: QueryParameters.positional(parameters),
+    );
+  }
+
+  _GeneratedStatement _buildUpdateRowStatement(
+    Table table,
+    Object id,
+    Map<String, dynamic> rowJson,
+    Set<Column> selectedColumns,
+  ) {
+    final assignments = <String>[];
+    final parameters = <Object?>[];
+
+    for (final column in selectedColumns) {
+      if (column.columnName == table.id.columnName) continue;
+      parameters.add(
+        _normalizeMutationValue(column, rowJson[column.columnName]),
+      );
+      assignments.add(
+        '${_renderIdentifier(column.columnName)} = \$${parameters.length}',
+      );
+    }
+
+    if (assignments.isEmpty) {
+      parameters.add(id);
+      assignments.add(
+        '${_renderIdentifier(table.id.columnName)} = \$${parameters.length}',
+      );
+    }
+
+    parameters.add(id);
+    return _GeneratedStatement(
+      sql:
+          'UPDATE ${_renderIdentifier(table.tableName)} '
+          'SET ${assignments.join(', ')} '
+          'WHERE ${_renderIdentifier(table.id.columnName)} = '
+          '\$${parameters.length} RETURNING *',
+      parameters: QueryParameters.positional(parameters),
+    );
+  }
+
+  _GeneratedStatement _buildUpdateColumnValuesStatement(
+    Table table, {
+    required String whereSql,
+    required List<ColumnValue> columnValues,
+    List<Object?> trailingParameters = const <Object?>[],
+  }) {
+    final parameters = <Object?>[];
+    final assignments = <String>[];
+
+    for (final columnValue in columnValues) {
+      parameters.add(
+        _normalizeMutationValue(columnValue.column, columnValue.value),
+      );
+      assignments.add(
+        '${_renderIdentifier(columnValue.column.columnName)} = '
+        '\$${parameters.length}',
+      );
+    }
+
+    parameters.addAll(trailingParameters);
+
+    return _GeneratedStatement(
+      sql:
+          'UPDATE ${_renderIdentifier(table.tableName)} '
+          'SET ${assignments.join(', ')} '
+          'WHERE $whereSql RETURNING *',
+      parameters: QueryParameters.positional(parameters),
+    );
+  }
+
+  Future<List<Object>> _selectIdsForMutation(
+    DatabaseSession session,
+    Table table, {
+    required Expression where,
+    int? limit,
+    int? offset,
+    List<Order>? orderBy,
+    required Transaction transaction,
+  }) async {
+    final query = FirebirdSelectQueryBuilder(table: table)
+        .withSelectFields([table.id])
+        .withWhere(where)
+        .withOrderBy(orderBy)
+        .withLimit(limit)
+        .withOffset(offset)
+        .build();
+
+    final resolvedRows = await _queryResolvedRows(
+      session,
+      query,
+      table: table,
+      transaction: transaction,
+      timeoutInSeconds: 60,
+    );
+
+    return resolvedRows
+        .map((row) => row[table.id.fieldName])
+        .whereType<Object>()
+        .toList();
+  }
+
+  List<Map<String, dynamic>> _restoreSelectionOrder(
+    List<Map<String, dynamic>> rows,
+    Table table,
+    List<Object> ids,
+  ) {
+    final orderById = <Object, int>{
+      for (var index = 0; index < ids.length; index++) ids[index]: index,
+    };
+
+    final sortedRows = rows.toList();
+    sortedRows.sort((a, b) {
+      final aIndex = orderById[a[table.id.fieldName]] ?? ids.length;
+      final bIndex = orderById[b[table.id.fieldName]] ?? ids.length;
+      return aIndex.compareTo(bIndex);
+    });
+    return sortedRows;
+  }
+
+  String _buildIdInClause(Table table, int idCount, int parameterOffset) {
+    final placeholders = List<String>.generate(
+      idCount,
+      (index) => '\$${parameterOffset + index + 1}',
+    );
+    return '${_renderIdentifier(table.id.columnName)} '
+        'IN (${placeholders.join(', ')})';
+  }
+
+  List<Map<String, dynamic>> Function(Iterable<Map<String, dynamic>>)
+  _mergeResultsWithNonPersistedFields<T extends TableRow>(List<T> rows) {
+    return (Iterable<Map<String, dynamic>> dbResults) =>
+        List<Map<String, dynamic>>.generate(dbResults.length, (index) {
+          return {
+            ...Map<String, dynamic>.from(rows[index].toJson() as Map),
+            ...dbResults.elementAt(index),
+          };
+        });
+  }
+
   void _assertSlice02CReadShapeSupported({
     required Table table,
     required Expression? where,
@@ -558,16 +1124,58 @@ Current type was $T''');
         column.fieldQueryAlias,
         DatabaseConstants.pgsqlMaxNameLimitation,
       );
+      final directColumnKey = column.columnName;
+      final directFieldKey = column.fieldName;
       final matchKey =
           rawRow.containsKey(alias)
               ? alias
-              : caseInsensitiveKeys[alias.toLowerCase()];
+              : rawRow.containsKey(directColumnKey)
+              ? directColumnKey
+              : rawRow.containsKey(directFieldKey)
+              ? directFieldKey
+              : caseInsensitiveKeys[alias.toLowerCase()] ??
+                  caseInsensitiveKeys[directColumnKey.toLowerCase()] ??
+                  caseInsensitiveKeys[directFieldKey.toLowerCase()];
       if (matchKey == null) continue;
       if (!rawRow.containsKey(matchKey)) continue;
       resolved[column.fieldName] = rawRow[matchKey];
     }
 
     return resolved;
+  }
+
+  String _renderIdentifier(String identifier) {
+    return '"${identifier.replaceAll('"', '""').toUpperCase()}"';
+  }
+
+  Object? _normalizeMutationValue(Column column, Object? value) {
+    if (value == null) return null;
+    if (column is ColumnSerializable) {
+      return SerializationManager.encode(value);
+    }
+    if (column is ColumnEnumExtended && value is Enum) {
+      return switch (column.serialized) {
+        EnumSerialization.byIndex => value.index,
+        EnumSerialization.byName => value.name,
+      };
+    }
+    if (value is Uri) return value.toString();
+    if (value is BigInt) return value.toString();
+    if (value is Enum) return value.name;
+    return value;
+  }
+
+  String _renderColumn(Column column) {
+    return '${_renderIdentifier(column.table.queryPrefix)}.'
+        '${_renderIdentifier(column.columnName)}';
+  }
+
+  String _renderExpression(Table table, Expression expression) {
+    var sql = expression.toString();
+    for (final column in table.columns) {
+      sql = sql.replaceAll(column.toString(), _renderColumn(column));
+    }
+    return sql;
   }
 
   static FirebirdTransactionSettings _mapTransactionSettings(
@@ -605,4 +1213,14 @@ Current type was $T''');
       stackTrace: trace,
     );
   }
+}
+
+class _GeneratedStatement {
+  const _GeneratedStatement({
+    required this.sql,
+    this.parameters,
+  });
+
+  final String sql;
+  final QueryParameters? parameters;
 }

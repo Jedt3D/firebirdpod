@@ -14,6 +14,8 @@ dependencies:
   meta: ^1.15.0
   serverpod_database:
     path: ../serverpod/packages/serverpod_database
+  serverpod_serialization:
+    path: ../serverpod/packages/serverpod_serialization
   serverpod_shared:
     path: ../serverpod/packages/serverpod_shared
 

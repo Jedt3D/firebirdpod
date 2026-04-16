@@ -65,6 +65,16 @@ Primary implementation repository for the Firebird-native Serverpod backend.
   - Firebird-native `OFFSET ... FETCH ...` pagination
   - single-table generated read locking through `FOR UPDATE WITH LOCK`
   - model row materialization through the Serverpod serialization manager
+- Phase 02 Slice 02D generated Serverpod writes for:
+  - `insert(...)` and `insertRow(...)`
+  - `update(...)`, `updateRow(...)`, `updateById(...)`, and `updateWhere(...)`
+  - `delete(...)`, `deleteRow(...)`, and `deleteWhere(...)`
+  - Firebird-native write materialization through `RETURNING *`
+  - ordered or limited write selection through a select-then-mutate path
+  - explicit multi-row atomicity through transactions or savepoints
+  - `lockRows(...)` for `LockMode.forUpdate` inside explicit transactions
+  - explicit rejection of `ignoreConflicts: true` until a Firebird-native
+    policy is designed
 - Live prototype transport using the local `fbdb` package that proves:
   - real `fbclient` attachment
   - prepared statement execution through the seam
@@ -161,6 +171,11 @@ tables inside the shared Firebird test database.
 The first generated read-path suite follows the same serial live-suite policy
 and currently stays within single-table reads. Includes and relation-aware
 generated queries remain a later slice.
+
+The generated write-path suite follows the same serial live-suite policy and
+currently stays within single-table CRUD plus `lockRows(...)` for
+`LockMode.forUpdate`. Includes, relation-aware mutations, and a Firebird-native
+`ignoreConflicts` strategy remain later slices.
 
 ## TODO
 
