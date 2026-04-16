@@ -1,11 +1,14 @@
 import 'package:serverpod_database/serverpod_database.dart';
 import 'package:serverpod_shared/serverpod_shared.dart';
 
-/// Firebird-native select builder for the first generated Serverpod read slice.
+/// Firebird-native select builder for the Serverpod runtime bridge.
 ///
-/// Slice 02C intentionally stays within single-table read queries. Includes and
-/// relation joins are handled in later slices once the baseline read path is
-/// proven end to end.
+/// The builder now covers:
+///
+/// - Slice 02C single-table reads and counts
+/// - Slice 02E object-include joins for generated relation loading
+///
+/// List includes are still handled as follow-up queries in the connection layer.
 class FirebirdSelectQueryBuilder {
   FirebirdSelectQueryBuilder({required Table table})
     : _table = table,
@@ -26,6 +29,7 @@ class FirebirdSelectQueryBuilder {
   int? _limit;
   int? _offset;
   Expression? _where;
+  Include? _include;
   LockMode? _lockMode;
   LockBehavior? _lockBehavior;
 
@@ -67,6 +71,11 @@ class FirebirdSelectQueryBuilder {
     return this;
   }
 
+  FirebirdSelectQueryBuilder withInclude(Include? include) {
+    _include = include;
+    return this;
+  }
+
   FirebirdSelectQueryBuilder withLockMode(
     LockMode? lockMode, [
     LockBehavior? lockBehavior,
@@ -77,10 +86,17 @@ class FirebirdSelectQueryBuilder {
   }
 
   String build() {
-    final select = _fields.map(_buildSelectField).join(', ');
+    final includeTables = _gatherIncludeObjectTables(_include, _table);
+    final selectColumns = [..._fields, ..._gatherIncludeColumns(_include, _table)];
+    final select = selectColumns.map(_buildSelectField).join(', ');
+    final joins = _gatherIncludeJoinStatements(includeTables);
     final buffer = StringBuffer(
-      'SELECT $select FROM ${_renderTableIdentifier(_table.tableName)}',
+      'SELECT $select FROM ${_renderTableReference(_table)}',
     );
+
+    if (joins.isNotEmpty) {
+      buffer.write(' ${joins.values.join(' ')}');
+    }
 
     if (_where != null) {
       buffer.write(' WHERE ${_renderExpression(_where!)}');
@@ -109,7 +125,7 @@ class FirebirdSelectQueryBuilder {
       column.fieldQueryAlias,
       DatabaseConstants.pgsqlMaxNameLimitation,
     );
-    return '${_renderColumn(column)} AS "${_escapeIdentifier(alias)}"';
+    return '${_renderColumn(column)} AS "${_escapeAlias(alias)}"';
   }
 
   String? _buildOrderByClause() {
@@ -145,16 +161,16 @@ class FirebirdSelectQueryBuilder {
 
     if (lockMode != LockMode.forUpdate) {
       throw UnsupportedError(
-        'Firebird only supports LockMode.forUpdate in the generated read path. '
-        'Requested: $lockMode.',
+        'Firebird currently supports only LockMode.forUpdate in the generated '
+        'read path. Requested: $lockMode.',
       );
     }
 
     final lockBehavior = _lockBehavior ?? LockBehavior.wait;
     if (lockBehavior == LockBehavior.noWait) {
       throw UnsupportedError(
-        'Firebird no-wait row locking is controlled by transaction parameters, '
-        'not a SELECT clause. Use wait or skipLocked for Slice 02C.',
+        'Firebird no-wait row locking is controlled by transaction settings, '
+        'not by a SELECT clause. Use wait or skipLocked on the Firebird path.',
       );
     }
 
@@ -164,29 +180,84 @@ class FirebirdSelectQueryBuilder {
     return 'FOR UPDATE WITH LOCK$skipLocked';
   }
 
-  String _escapeIdentifier(String identifier) {
-    return identifier.replaceAll('"', '""');
+  Map<String, String> _gatherIncludeJoinStatements(
+    List<Table> includeTables,
+  ) {
+    final joins = <String, String>{};
+    if (includeTables.isEmpty) return joins;
+
+    final tablesByQueryPrefix = <String, Table>{
+      _table.queryPrefix: _table,
+      for (final table in includeTables) table.queryPrefix: table,
+    };
+
+    for (final table in includeTables) {
+      final relation = table.tableRelation;
+      if (relation == null) continue;
+
+      for (final subRelation in relation.getRelations) {
+        final foreignTable = tablesByQueryPrefix[subRelation.relationQueryAlias];
+        if (foreignTable == null) continue;
+        joins[subRelation.relationQueryAlias] = _buildJoinStatement(
+          tableRelation: subRelation,
+          foreignTable: foreignTable,
+        );
+      }
+    }
+
+    return joins;
   }
 
-  String _renderColumn(Column column) {
-    return '${_renderTableIdentifier(column.table.queryPrefix)}.'
-        '${_renderTableIdentifier(column.columnName)}';
+  String _buildJoinStatement({
+    required dynamic tableRelation,
+    required Table foreignTable,
+  }) {
+    final foreignColumn = foreignTable.columns.firstWhere(
+      (column) => column.fieldName == tableRelation.foreignFieldName,
+      orElse: () {
+        throw StateError(
+          'Missing foreign column for relation ${tableRelation.relationQueryAlias}.',
+        );
+      },
+    );
+
+    return 'LEFT JOIN ${_renderTableReference(foreignTable)} ON '
+        '${_renderColumn(tableRelation.fieldColumn)} = '
+        '${_renderColumn(foreignColumn)}';
   }
 
   String _renderExpression(Expression expression) {
     var sql = expression.toString();
-    for (final column in _table.columns) {
+    for (final column in expression.columns) {
       sql = sql.replaceAll(column.toString(), _renderColumn(column));
     }
     return sql;
   }
 
-  String _renderTableIdentifier(String identifier) {
-    return '"${_escapeIdentifier(identifier.toUpperCase())}"';
+  String _renderColumn(Column column) {
+    return '${_renderAlias(column.table.queryPrefix)}.'
+        '${_renderSchemaIdentifier(column.columnName)}';
+  }
+
+  String _renderTableReference(Table table) {
+    return '${_renderSchemaIdentifier(table.tableName)} '
+        'AS ${_renderAlias(table.queryPrefix)}';
+  }
+
+  String _renderSchemaIdentifier(String identifier) {
+    return '"${identifier.replaceAll('"', '""').toUpperCase()}"';
+  }
+
+  String _renderAlias(String identifier) {
+    return '"${_escapeAlias(identifier)}"';
+  }
+
+  String _escapeAlias(String identifier) {
+    return identifier.replaceAll('"', '""');
   }
 }
 
-/// Firebird-native count builder for the first generated read slice.
+/// Firebird-native count builder for the generated read slice.
 class FirebirdCountQueryBuilder {
   FirebirdCountQueryBuilder({required Table table}) : _table = table;
 
@@ -220,7 +291,7 @@ class FirebirdCountQueryBuilder {
     if (_limit == null) {
       final buffer = StringBuffer(
         'SELECT COUNT(*) AS "$alias" '
-        'FROM ${_renderIdentifier(_table.tableName)}',
+        'FROM ${_renderTableReference(_table)}',
       );
       if (_where != null) {
         buffer.write(' WHERE ${_renderExpression(_where!)}');
@@ -229,8 +300,8 @@ class FirebirdCountQueryBuilder {
     }
 
     final inner = StringBuffer(
-      'SELECT 1 AS ${_renderIdentifier('LIMITED_ROW')} '
-      'FROM ${_renderIdentifier(_table.tableName)}',
+      'SELECT 1 AS ${_renderSchemaIdentifier('LIMITED_ROW')} '
+      'FROM ${_renderTableReference(_table)}',
     );
     if (_where != null) {
       inner.write(' WHERE ${_renderExpression(_where!)}');
@@ -243,18 +314,58 @@ class FirebirdCountQueryBuilder {
 
   String _renderExpression(Expression expression) {
     var sql = expression.toString();
-    for (final column in _table.columns) {
+    for (final column in expression.columns) {
       sql = sql.replaceAll(column.toString(), _renderColumn(column));
     }
     return sql;
   }
 
   String _renderColumn(Column column) {
-    return '${_renderIdentifier(column.table.queryPrefix)}.'
-        '${_renderIdentifier(column.columnName)}';
+    return '${_renderAlias(column.table.queryPrefix)}.'
+        '${_renderSchemaIdentifier(column.columnName)}';
   }
 
-  String _renderIdentifier(String identifier) {
+  String _renderTableReference(Table table) {
+    return '${_renderSchemaIdentifier(table.tableName)} '
+        'AS ${_renderAlias(table.queryPrefix)}';
+  }
+
+  String _renderSchemaIdentifier(String identifier) {
     return '"${identifier.replaceAll('"', '""').toUpperCase()}"';
   }
+
+  String _renderAlias(String identifier) {
+    return '"${identifier.replaceAll('"', '""')}"';
+  }
+}
+
+List<Column> _gatherIncludeColumns(Include? include, Table table) {
+  if (include == null) return const [];
+
+  final fields = <String, Column>{};
+  for (final includeTable in _gatherIncludeObjectTables(include, table)) {
+    for (final column in includeTable.columns) {
+      fields['${includeTable.queryPrefix}.${column.columnName}'] = column;
+    }
+  }
+  return fields.values.toList();
+}
+
+List<Table> _gatherIncludeObjectTables(Include? include, Table table) {
+  final tables = <Table>[];
+  if (include == null) return tables;
+
+  include.includes.forEach((relationField, relationInclude) {
+    if (relationInclude == null || relationInclude is IncludeList) {
+      return;
+    }
+
+    final relationTable = table.getRelationTable(relationField);
+    if (relationTable == null) return;
+
+    tables.add(relationTable);
+    tables.addAll(_gatherIncludeObjectTables(relationInclude, relationTable));
+  });
+
+  return tables;
 }

@@ -106,14 +106,6 @@ class _TestDatabaseSession implements DatabaseSession {
   LogWarningFunction? get logWarning => null;
 }
 
-class _UnsupportedInclude implements IncludeObject {
-  @override
-  Map<String, Include?> get includes => const {};
-
-  @override
-  Table get table => _ReadRow._table;
-}
-
 void main() {
   group('Phase 02 Serverpod generated read bridge', () {
     late FirebirdServerpodDatabaseConnection connection;
@@ -280,7 +272,7 @@ void main() {
       );
     });
 
-    test('find rejects includes until relation loading lands', () async {
+    test('find rejects unsupported lock modes beyond forUpdate', () async {
       if (!shouldRunDirectIntegrationTests()) {
         return;
       }
@@ -290,13 +282,13 @@ void main() {
       await expectLater(
         () => connection.find<_ReadRow>(
           session,
-          include: _UnsupportedInclude(),
+          lockMode: LockMode.forShare,
         ),
         throwsA(
           isA<UnsupportedError>().having(
             (error) => error.message,
             'message',
-            contains('includes'),
+            contains('LockMode.forUpdate'),
           ),
         ),
       );

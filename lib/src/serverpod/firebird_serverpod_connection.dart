@@ -44,7 +44,7 @@ class FirebirdServerpodDatabaseConnection
     final orderByCols = _resolveOrderBy(orderByList, orderBy, orderDescending);
 
     _ensureValueEncoderConfigured();
-    _assertSlice02CReadShapeSupported(
+    _assertGeneratedReadShapeSupported(
       table: table,
       where: where,
       orderBy: orderByCols,
@@ -57,6 +57,7 @@ class FirebirdServerpodDatabaseConnection
         .withOrderBy(orderByCols)
         .withLimit(limit)
         .withOffset(offset)
+        .withInclude(include)
         .withLockMode(lockMode, lockBehavior)
         .build();
 
@@ -68,8 +69,11 @@ class FirebirdServerpodDatabaseConnection
     );
 
     return _deserializePrefixedRows<T>(
-      table,
-      result.map((row) => row.toColumnMap()),
+      session,
+      table: table,
+      rows: result.map((row) => row.toColumnMap()),
+      include: include,
+      transaction: transaction,
     );
   }
 
@@ -135,7 +139,7 @@ class FirebirdServerpodDatabaseConnection
     final table = _getTableOrAssert<T>(operation: 'lockRows');
 
     _ensureValueEncoderConfigured();
-    _assertSlice02CReadShapeSupported(
+    _assertGeneratedReadShapeSupported(
       table: table,
       where: where,
       orderBy: null,
@@ -359,7 +363,7 @@ class FirebirdServerpodDatabaseConnection
 
     final orderByCols = _resolveOrderBy(orderByList, orderBy, orderDescending);
     _ensureValueEncoderConfigured();
-    _assertSlice02CReadShapeSupported(
+    _assertGeneratedReadShapeSupported(
       table: table,
       where: where,
       orderBy: orderByCols,
@@ -489,7 +493,7 @@ class FirebirdServerpodDatabaseConnection
     final orderByCols = _resolveOrderBy(orderByList, orderBy, orderDescending);
 
     _ensureValueEncoderConfigured();
-    _assertSlice02CReadShapeSupported(
+    _assertGeneratedReadShapeSupported(
       table: table,
       where: where,
       orderBy: orderByCols,
@@ -559,7 +563,7 @@ class FirebirdServerpodDatabaseConnection
     final table = _getTableOrAssert<T>(operation: 'count');
 
     _ensureValueEncoderConfigured();
-    _assertSlice02CReadShapeSupported(
+    _assertGeneratedReadShapeSupported(
       table: table,
       where: where,
       orderBy: null,
@@ -1058,23 +1062,16 @@ Current type was $T''');
         });
   }
 
-  void _assertSlice02CReadShapeSupported({
+  void _assertGeneratedReadShapeSupported({
     required Table table,
     required Expression? where,
     required List<Order>? orderBy,
     required Include? include,
   }) {
-    if (include != null) {
-      throw UnsupportedError(
-        'Firebird generated includes are not implemented yet. '
-        'Slice 02C supports only single-table reads.',
-      );
-    }
-
     if (where != null && _referencesForeignTable(table, where.columns)) {
       throw UnsupportedError(
-        'Firebird Slice 02C does not yet support relation-based WHERE '
-        'expressions. Use single-table filters until include/join support lands.',
+        'Firebird generated reads do not yet support relation-based WHERE '
+        'expressions. Use base-table filters until join-aware filtering lands.',
       );
     }
 
@@ -1084,8 +1081,8 @@ Current type was $T''');
           orderBy.map((entry) => entry.column),
         )) {
       throw UnsupportedError(
-        'Firebird Slice 02C does not yet support relation-based ORDER BY '
-        'expressions. Use single-table ordering until include/join support lands.',
+        'Firebird generated reads do not yet support relation-based ORDER BY '
+        'expressions. Use base-table ordering until join-aware sorting lands.',
       );
     }
   }
@@ -1100,12 +1097,32 @@ Current type was $T''');
     return false;
   }
 
-  List<T> _deserializePrefixedRows<T extends TableRow>(
-    Table table,
-    Iterable<Map<String, dynamic>> rows,
-  ) {
-    return rows
-        .map((rawRow) => _resolveSingleTableRow(table, rawRow))
+  Future<List<T>> _deserializePrefixedRows<T extends TableRow>(
+    DatabaseSession session, {
+    required Table table,
+    required Iterable<Map<String, dynamic>> rows,
+    required Include? include,
+    required Transaction? transaction,
+  }) async {
+    final rowList = rows.toList();
+    final resolvedListRelations = await _queryIncludedLists(
+      session,
+      table,
+      include,
+      rowList,
+      transaction,
+    );
+
+    return rowList
+        .map(
+          (rawRow) => _resolvePrefixedQueryRow(
+            table,
+            rawRow,
+            resolvedListRelations,
+            include: include,
+          ),
+        )
+        .whereType<Map<String, dynamic>>()
         .map(poolManager.serializationManager.deserialize<T>)
         .toList();
   }
@@ -1114,34 +1131,306 @@ Current type was $T''');
     Table table,
     Map<String, dynamic> rawRow,
   ) {
-    final caseInsensitiveKeys = <String, String>{
-      for (final key in rawRow.keys) key.toLowerCase(): key,
-    };
     final resolved = <String, dynamic>{};
 
     for (final column in table.columns) {
-      final alias = truncateIdentifier(
-        column.fieldQueryAlias,
-        DatabaseConstants.pgsqlMaxNameLimitation,
+      final value = _lookupQueryValue(
+        rawRow,
+        column,
+        prefixed: true,
+        allowDirectColumnName: true,
       );
-      final directColumnKey = column.columnName;
-      final directFieldKey = column.fieldName;
-      final matchKey =
-          rawRow.containsKey(alias)
-              ? alias
-              : rawRow.containsKey(directColumnKey)
-              ? directColumnKey
-              : rawRow.containsKey(directFieldKey)
-              ? directFieldKey
-              : caseInsensitiveKeys[alias.toLowerCase()] ??
-                  caseInsensitiveKeys[directColumnKey.toLowerCase()] ??
-                  caseInsensitiveKeys[directFieldKey.toLowerCase()];
-      if (matchKey == null) continue;
-      if (!rawRow.containsKey(matchKey)) continue;
-      resolved[column.fieldName] = rawRow[matchKey];
+      if (value.found) {
+        resolved[column.fieldName] = value.value;
+      }
     }
 
     return resolved;
+  }
+
+  Future<Map<String, Map<Object, List<Map<String, dynamic>>>>>
+  _queryIncludedLists(
+    DatabaseSession session,
+    Table table,
+    Include? include,
+    Iterable<Map<String, dynamic>> previousResultSet,
+    Transaction? transaction,
+  ) async {
+    if (include == null) return {};
+
+    final resolvedListRelations =
+        <String, Map<Object, List<Map<String, dynamic>>>>{};
+
+    for (final entry in include.includes.entries) {
+      final nestedInclude = entry.value;
+      final relationFieldName = entry.key;
+      final relativeRelationTable = table.getRelationTable(relationFieldName);
+      final tableRelation = relativeRelationTable?.tableRelation;
+
+      if (relativeRelationTable == null || tableRelation == null) {
+        throw StateError('Relation table is null.');
+      }
+
+      if (nestedInclude is IncludeList) {
+        if (nestedInclude.limit != null || nestedInclude.offset != null) {
+          throw UnsupportedError(
+            'Firebird generated IncludeList pagination is not implemented yet. '
+            'Slice 02E currently supports list includes without per-parent '
+            'limit or offset.',
+          );
+        }
+
+        final ids = _extractPrimaryKeyForRelation<Object>(
+          previousResultSet,
+          tableRelation,
+        );
+
+        if (ids.isEmpty) continue;
+
+        final relationTable = nestedInclude.table;
+        final orderBy = _resolveOrderBy(
+          nestedInclude.orderByList,
+          nestedInclude.orderBy,
+          // ignore: deprecated_member_use
+          nestedInclude.orderDescending,
+        );
+        final where = _combineWhereWithRelationIds(
+          relationTable,
+          tableRelation,
+          ids,
+          nestedInclude.where,
+        );
+
+        _ensureValueEncoderConfigured();
+        _assertGeneratedReadShapeSupported(
+          table: relationTable,
+          where: where,
+          orderBy: orderBy,
+          include: nestedInclude,
+        );
+
+        final query = FirebirdSelectQueryBuilder(table: relationTable)
+            .withSelectFields(relationTable.columns)
+            .withWhere(where)
+            .withOrderBy(orderBy)
+            .withInclude(nestedInclude)
+            .build();
+
+        final includeListRows = await _queryColumnMaps(
+          session,
+          query,
+          timeoutInSeconds: 60,
+          transaction: transaction,
+        );
+
+        final resolvedLists = await _queryIncludedLists(
+          session,
+          relationTable,
+          nestedInclude,
+          includeListRows,
+          transaction,
+        );
+
+        final resolvedList = includeListRows
+            .map(
+              (rawRow) => _resolvePrefixedQueryRow(
+                relationTable,
+                rawRow,
+                resolvedLists,
+                include: nestedInclude,
+              ),
+            )
+            .whereType<Map<String, dynamic>>()
+            .toList();
+
+        resolvedListRelations.addAll(
+          _mapListToQueryById(
+            resolvedList,
+            relativeRelationTable,
+            tableRelation.foreignFieldName,
+          ),
+        );
+      } else {
+        final resolvedNestedListRelations = await _queryIncludedLists(
+          session,
+          relativeRelationTable,
+          nestedInclude,
+          previousResultSet,
+          transaction,
+        );
+        resolvedListRelations.addAll(resolvedNestedListRelations);
+      }
+    }
+
+    return resolvedListRelations;
+  }
+
+  Expression _combineWhereWithRelationIds(
+    Table relationTable,
+    dynamic tableRelation,
+    Set<Object> ids,
+    Expression? where,
+  ) {
+    final foreignColumn = relationTable.columns.firstWhere(
+      (column) => column.fieldName == tableRelation.foreignFieldName,
+      orElse: () {
+        throw StateError(
+          'Missing relation column ${tableRelation.foreignFieldName} on '
+          '${relationTable.tableName}.',
+        );
+      },
+    );
+
+    final encodedIds = ids.map(ValueEncoder.instance.convert).join(', ');
+    final relationWhere = _ColumnSqlExpression(
+      '${foreignColumn.toString()} IN ($encodedIds)',
+      [foreignColumn],
+    );
+    if (where == null) return relationWhere;
+    return where & relationWhere;
+  }
+
+  Future<List<Map<String, dynamic>>> _queryColumnMaps(
+    DatabaseSession session,
+    String query, {
+    required int? timeoutInSeconds,
+    required Transaction? transaction,
+    QueryParameters? parameters,
+  }) async {
+    final result = await this.query(
+      session,
+      query,
+      timeoutInSeconds: timeoutInSeconds,
+      transaction: transaction,
+      parameters: parameters,
+    );
+    return result.map((row) => row.toColumnMap()).toList();
+  }
+
+  Map<String, Map<Object, List<Map<String, dynamic>>>> _mapListToQueryById(
+    List<Map<String, dynamic>> resolvedList,
+    Table relativeRelationTable,
+    String foreignFieldName,
+  ) {
+    final mappedLists = <Object, List<Map<String, dynamic>>>{};
+    for (final row in resolvedList) {
+      final id = row[foreignFieldName];
+      if (id == null) continue;
+      mappedLists.update(
+        id,
+        (value) => [...value, row],
+        ifAbsent: () => [row],
+      );
+    }
+
+    return {relativeRelationTable.queryPrefix: mappedLists};
+  }
+
+  Set<T> _extractPrimaryKeyForRelation<T>(
+    Iterable<Map<String, dynamic>> resultSet,
+    dynamic tableRelation,
+  ) {
+    final idFieldName = tableRelation.fieldQueryAliasWithJoins;
+    return resultSet
+        .map((row) => _lookupRawKey(row, idFieldName) as T?)
+        .whereType<T>()
+        .toSet();
+  }
+
+  Map<String, dynamic>? _resolvePrefixedQueryRow(
+    Table table,
+    Map<String, dynamic> rawRow,
+    Map<String, Map<Object, List<Map<String, dynamic>>>> resolvedListRelations, {
+    Include? include,
+  }) {
+    final resolvedTableRow = _createColumnMapFromQueryAliasColumns(
+      table.columns,
+      rawRow,
+    );
+
+    if (resolvedTableRow.isEmpty) {
+      return null;
+    }
+
+    include?.includes.forEach((relationField, relationInclude) {
+      if (relationInclude == null) return;
+
+      final relationTable = table.getRelationTable(relationField);
+      if (relationTable == null) return;
+
+      if (relationInclude is IncludeList) {
+        final primaryKey = resolvedTableRow['id'];
+        if (primaryKey == null) {
+          throw ArgumentError('Cannot resolve list relation without id.');
+        }
+
+        resolvedTableRow[relationField] =
+            resolvedListRelations[relationTable.queryPrefix]?[primaryKey] ?? [];
+      } else {
+        resolvedTableRow[relationField] = _resolvePrefixedQueryRow(
+          relationTable,
+          rawRow,
+          resolvedListRelations,
+          include: relationInclude,
+        );
+      }
+    });
+
+    return resolvedTableRow;
+  }
+
+  Map<String, dynamic> _createColumnMapFromQueryAliasColumns(
+    List<Column> columns,
+    Map<String, dynamic> rawRow,
+  ) {
+    final columnMap = <String, dynamic>{};
+    for (final column in columns) {
+      final value = _lookupQueryValue(rawRow, column, prefixed: true);
+      if (value.found && value.value != null) {
+        columnMap[column.fieldName] = value.value;
+      }
+    }
+    return columnMap;
+  }
+
+  _QueryValueLookup _lookupQueryValue(
+    Map<String, dynamic> rawRow,
+    Column column, {
+    required bool prefixed,
+    bool allowDirectColumnName = false,
+  }) {
+    final candidates = <String>[
+      if (prefixed)
+        truncateIdentifier(
+          column.fieldQueryAlias,
+          DatabaseConstants.pgsqlMaxNameLimitation,
+        ),
+      if (allowDirectColumnName) column.columnName,
+      if (allowDirectColumnName) column.fieldName,
+    ];
+
+    for (final candidate in candidates) {
+      final value = _lookupRawKey(rawRow, candidate);
+      if (value != _missingQueryValue) {
+        return _QueryValueLookup(found: true, value: value);
+      }
+    }
+
+    return const _QueryValueLookup(found: false, value: null);
+  }
+
+  Object? _lookupRawKey(Map<String, dynamic> rawRow, String key) {
+    if (rawRow.containsKey(key)) {
+      return rawRow[key];
+    }
+
+    final lowered = key.toLowerCase();
+    for (final entry in rawRow.entries) {
+      if (entry.key.toLowerCase() == lowered) {
+        return entry.value;
+      }
+    }
+    return _missingQueryValue;
   }
 
   String _renderIdentifier(String identifier) {
@@ -1223,4 +1512,28 @@ class _GeneratedStatement {
 
   final String sql;
   final QueryParameters? parameters;
+}
+
+const _missingQueryValue = Object();
+
+class _QueryValueLookup {
+  const _QueryValueLookup({
+    required this.found,
+    required this.value,
+  });
+
+  final bool found;
+  final Object? value;
+}
+
+class _ColumnSqlExpression extends Expression<String> {
+  const _ColumnSqlExpression(
+    super.expression,
+    this._columns,
+  );
+
+  final List<Column> _columns;
+
+  @override
+  List<Column> get columns => _columns;
 }
