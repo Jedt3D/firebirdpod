@@ -136,6 +136,12 @@ rejected by the local Firebird environment.
 The pooled-reset integration test follows the same policy and uses dedicated
 tables inside the shared Firebird test database.
 
+## TODO
+
+Deferred follow-ups and revisit windows are tracked in:
+
+- `/Users/worajedt/GitHub/FireDart/firebirdpod/TODO.md`
+
 ## Fixture Work
 
 - Raw Firebird fixtures live outside this repository under:
