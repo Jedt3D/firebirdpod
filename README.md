@@ -98,7 +98,8 @@ Primary implementation repository for the Firebird-native Serverpod backend.
   - guarded `createTableIfNotExists` via Firebird `EXECUTE BLOCK`
   - deterministic unit coverage for supported SQL generation
   - explicit rejection of unsupported first-slice features such as non-public
-    schemas, tablespaces, vector types, partial indexes, and UUID v7 defaults
+    schemas, tablespaces, vector types, partial indexes, random UUID defaults,
+    and UUID v7 defaults
 - Phase 03 Slice 03B migration-execution baseline for:
   - batch-aware `simpleQuery(...)` and `simpleExecute(...)` execution for
     Firebird migration SQL
@@ -109,6 +110,16 @@ Primary implementation repository for the Firebird-native Serverpod backend.
   - live rollback proof for DDL inside the migration transaction
   - live concurrency proof for the lock window using a second isolate to avoid
     same-isolate blocking FFI deadlock in the test harness
+- Phase 03 Slice 03C schema-analysis baseline for:
+  - Firebird-owned schema introspection through
+    `FirebirdServerpodDatabaseAnalyzer`
+  - user-table, column, ordinary-index, and foreign-key metadata from Firebird
+    system tables
+  - first supported type and default-value normalization back into
+    Serverpod-facing `DatabaseDefinition` objects
+  - live round-trip integrity proof against generated Firebird schema
+  - directional drift reporting for both missing target elements and
+    unexpected live elements
 - Live prototype transport using the local `fbdb` package that proves:
   - real `fbclient` attachment
   - prepared statement execution through the seam
@@ -234,6 +245,14 @@ proves:
 - batch execution for ordinary `;`-separated SQL and `EXECUTE BLOCK`
 - a Firebird-native migration policy where metadata bootstrap is committed
   before the lock window starts
+
+The analyzer suite follows the same live-suite policy and currently proves:
+
+- generated Firebird schema can be introspected back into supported
+  `DatabaseDefinition` metadata
+- `verifyDatabaseIntegrity(...)` passes for the supported round-trip schema
+- `verifyDatabaseIntegrity(...)` fails for a supported drift mismatch and
+  reports a usable warning
 
 The runnable proof example lives at:
 
