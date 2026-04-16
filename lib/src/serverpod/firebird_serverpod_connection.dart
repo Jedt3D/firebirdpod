@@ -214,11 +214,7 @@ class FirebirdServerpodDatabaseConnection
     T row, {
     Transaction? transaction,
   }) async {
-    final result = await insert<T>(
-      session,
-      [row],
-      transaction: transaction,
-    );
+    final result = await insert<T>(session, [row], transaction: transaction);
 
     if (result.length != 1) {
       throw StateError(
@@ -395,45 +391,37 @@ class FirebirdServerpodDatabaseConnection
           .toList();
     }
 
-    return _runInTransactionOrSavepoint(
-      session,
-      transaction,
-      (tx) async {
-        final ids = await _selectIdsForMutation(
-          session,
-          table,
-          where: where,
-          limit: limit,
-          offset: offset,
-          orderBy: orderByCols,
-          transaction: tx,
-        );
-        if (ids.isEmpty) return <T>[];
+    return _runInTransactionOrSavepoint(session, transaction, (tx) async {
+      final ids = await _selectIdsForMutation(
+        session,
+        table,
+        where: where,
+        limit: limit,
+        offset: offset,
+        orderBy: orderByCols,
+        transaction: tx,
+      );
+      if (ids.isEmpty) return <T>[];
 
-        final statement = _buildUpdateColumnValuesStatement(
-          table,
-          whereSql: _buildIdInClause(table, ids.length, columnValues.length),
-          columnValues: columnValues,
-          trailingParameters: ids,
-        );
-        var resolvedRows = await _queryResolvedRows(
-          session,
-          statement.sql,
-          table: table,
-          transaction: tx,
-          parameters: statement.parameters,
-        );
-        resolvedRows = _restoreSelectionOrder(
-          resolvedRows,
-          table,
-          ids,
-        );
+      final statement = _buildUpdateColumnValuesStatement(
+        table,
+        whereSql: _buildIdInClause(table, ids.length, columnValues.length),
+        columnValues: columnValues,
+        trailingParameters: ids,
+      );
+      var resolvedRows = await _queryResolvedRows(
+        session,
+        statement.sql,
+        table: table,
+        transaction: tx,
+        parameters: statement.parameters,
+      );
+      resolvedRows = _restoreSelectionOrder(resolvedRows, table, ids);
 
-        return resolvedRows
-            .map(poolManager.serializationManager.deserialize<T>)
-            .toList();
-      },
-    );
+      return resolvedRows
+          .map(poolManager.serializationManager.deserialize<T>)
+          .toList();
+    });
   }
 
   @override
@@ -467,11 +455,7 @@ class FirebirdServerpodDatabaseConnection
     T row, {
     Transaction? transaction,
   }) async {
-    final result = await delete<T>(
-      session,
-      [row],
-      transaction: transaction,
-    );
+    final result = await delete<T>(session, [row], transaction: transaction);
 
     if (result.isEmpty) {
       throw StateError('Failed to delete row, no rows deleted.');
@@ -500,8 +484,7 @@ class FirebirdServerpodDatabaseConnection
       include: null,
     );
 
-    final requiresSelectedIds =
-        orderByCols != null;
+    final requiresSelectedIds = orderByCols != null;
 
     if (!requiresSelectedIds) {
       final resolvedRows = await _queryResolvedRows(
@@ -516,39 +499,35 @@ class FirebirdServerpodDatabaseConnection
           .toList();
     }
 
-    return _runInTransactionOrSavepoint(
-      session,
-      transaction,
-      (tx) async {
-        final ids = await _selectIdsForMutation(
-          session,
-          table,
-          where: where,
-          orderBy: orderByCols,
-          transaction: tx,
-        );
-        if (ids.isEmpty) return <T>[];
+    return _runInTransactionOrSavepoint(session, transaction, (tx) async {
+      final ids = await _selectIdsForMutation(
+        session,
+        table,
+        where: where,
+        orderBy: orderByCols,
+        transaction: tx,
+      );
+      if (ids.isEmpty) return <T>[];
 
-        final statement = _GeneratedStatement(
-          sql:
-              'DELETE FROM ${_renderIdentifier(table.tableName)} '
-              'WHERE ${_buildIdInClause(table, ids.length, 0)} RETURNING *',
-          parameters: QueryParameters.positional(ids),
-        );
-        var resolvedRows = await _queryResolvedRows(
-          session,
-          statement.sql,
-          table: table,
-          transaction: tx,
-          parameters: statement.parameters,
-        );
-        resolvedRows = _restoreSelectionOrder(resolvedRows, table, ids);
+      final statement = _GeneratedStatement(
+        sql:
+            'DELETE FROM ${_renderIdentifier(table.tableName)} '
+            'WHERE ${_buildIdInClause(table, ids.length, 0)} RETURNING *',
+        parameters: QueryParameters.positional(ids),
+      );
+      var resolvedRows = await _queryResolvedRows(
+        session,
+        statement.sql,
+        table: table,
+        transaction: tx,
+        parameters: statement.parameters,
+      );
+      resolvedRows = _restoreSelectionOrder(resolvedRows, table, ids);
 
-        return resolvedRows
-            .map(poolManager.serializationManager.deserialize<T>)
-            .toList();
-      },
-    );
+      return resolvedRows
+          .map(poolManager.serializationManager.deserialize<T>)
+          .toList();
+    });
   }
 
   @override
@@ -570,11 +549,9 @@ class FirebirdServerpodDatabaseConnection
       include: null,
     );
 
-    final query = FirebirdCountQueryBuilder(table: table)
-        .withCountAlias('C')
-        .withWhere(where)
-        .withLimit(limit)
-        .build();
+    final query = FirebirdCountQueryBuilder(
+      table: table,
+    ).withCountAlias('C').withWhere(where).withLimit(limit).build();
 
     final result = await this.query(
       session,
@@ -633,13 +610,7 @@ class FirebirdServerpodDatabaseConnection
       );
       return result;
     } catch (error, stackTrace) {
-      _logQuery(
-        session,
-        query,
-        stopwatch,
-        exception: error,
-        trace: stackTrace,
-      );
+      _logQuery(session, query, stopwatch, exception: error, trace: stackTrace);
       rethrow;
     }
   }
@@ -663,21 +634,10 @@ class FirebirdServerpodDatabaseConnection
         parameters: parameters,
       );
       final affectedRows = result.affectedRows ?? result.rows.length;
-      _logQuery(
-        session,
-        query,
-        stopwatch,
-        numRowsAffected: affectedRows,
-      );
+      _logQuery(session, query, stopwatch, numRowsAffected: affectedRows);
       return affectedRows;
     } catch (error, stackTrace) {
-      _logQuery(
-        session,
-        query,
-        stopwatch,
-        exception: error,
-        trace: stackTrace,
-      );
+      _logQuery(session, query, stopwatch, exception: error, trace: stackTrace);
       rethrow;
     }
   }
@@ -786,9 +746,7 @@ class FirebirdServerpodDatabaseConnection
           Map<String, Object?>.from(parameters),
         ),
       QueryParametersPositional(:final parameters) =>
-        FirebirdStatementParameters.positional(
-          List<Object?>.from(parameters),
-        ),
+        FirebirdStatementParameters.positional(List<Object?>.from(parameters)),
       _ => throw UnsupportedError(
         'Unsupported QueryParameters implementation '
         '${parameters.runtimeType}.',
@@ -1076,10 +1034,7 @@ Current type was $T''');
     }
 
     if (orderBy != null &&
-        _referencesForeignTable(
-          table,
-          orderBy.map((entry) => entry.column),
-        )) {
+        _referencesForeignTable(table, orderBy.map((entry) => entry.column))) {
       throw UnsupportedError(
         'Firebird generated reads do not yet support relation-based ORDER BY '
         'expressions. Use base-table ordering until join-aware sorting lands.',
@@ -1172,14 +1127,6 @@ Current type was $T''');
       }
 
       if (nestedInclude is IncludeList) {
-        if (nestedInclude.limit != null || nestedInclude.offset != null) {
-          throw UnsupportedError(
-            'Firebird generated IncludeList pagination is not implemented yet. '
-            'Slice 02E currently supports list includes without per-parent '
-            'limit or offset.',
-          );
-        }
-
         final ids = _extractPrimaryKeyForRelation<Object>(
           previousResultSet,
           tableRelation,
@@ -1188,6 +1135,13 @@ Current type was $T''');
         if (ids.isEmpty) continue;
 
         final relationTable = nestedInclude.table;
+        if (nestedInclude.limit != null && nestedInclude.limit! <= 0) {
+          resolvedListRelations[relativeRelationTable.queryPrefix] = {
+            for (final id in ids) id: <Map<String, dynamic>>[],
+          };
+          continue;
+        }
+
         final orderBy = _resolveOrderBy(
           nestedInclude.orderByList,
           nestedInclude.orderBy,
@@ -1209,12 +1163,30 @@ Current type was $T''');
           include: nestedInclude,
         );
 
-        final query = FirebirdSelectQueryBuilder(table: relationTable)
-            .withSelectFields(relationTable.columns)
-            .withWhere(where)
-            .withOrderBy(orderBy)
-            .withInclude(nestedInclude)
-            .build();
+        final hasPerParentPagination =
+            nestedInclude.limit != null ||
+            (nestedInclude.offset != null && nestedInclude.offset! > 0);
+        final query = hasPerParentPagination
+            ? FirebirdPerParentIncludeListQueryBuilder(
+                    table: relationTable,
+                    partitionColumn: _findRelationForeignColumn(
+                      relationTable,
+                      tableRelation,
+                    ),
+                  )
+                  .withSelectFields(relationTable.columns)
+                  .withWhere(where)
+                  .withOrderBy(orderBy)
+                  .withLimit(nestedInclude.limit)
+                  .withOffset(nestedInclude.offset)
+                  .withInclude(nestedInclude)
+                  .build()
+            : FirebirdSelectQueryBuilder(table: relationTable)
+                  .withSelectFields(relationTable.columns)
+                  .withWhere(where)
+                  .withOrderBy(orderBy)
+                  .withInclude(nestedInclude)
+                  .build();
 
         final includeListRows = await _queryColumnMaps(
           session,
@@ -1271,14 +1243,9 @@ Current type was $T''');
     Set<Object> ids,
     Expression? where,
   ) {
-    final foreignColumn = relationTable.columns.firstWhere(
-      (column) => column.fieldName == tableRelation.foreignFieldName,
-      orElse: () {
-        throw StateError(
-          'Missing relation column ${tableRelation.foreignFieldName} on '
-          '${relationTable.tableName}.',
-        );
-      },
+    final foreignColumn = _findRelationForeignColumn(
+      relationTable,
+      tableRelation,
     );
 
     final encodedIds = ids.map(ValueEncoder.instance.convert).join(', ');
@@ -1288,6 +1255,21 @@ Current type was $T''');
     );
     if (where == null) return relationWhere;
     return where & relationWhere;
+  }
+
+  Column _findRelationForeignColumn(
+    Table relationTable,
+    dynamic tableRelation,
+  ) {
+    return relationTable.columns.firstWhere(
+      (column) => column.fieldName == tableRelation.foreignFieldName,
+      orElse: () {
+        throw StateError(
+          'Missing relation column ${tableRelation.foreignFieldName} on '
+          '${relationTable.tableName}.',
+        );
+      },
+    );
   }
 
   Future<List<Map<String, dynamic>>> _queryColumnMaps(
@@ -1316,11 +1298,7 @@ Current type was $T''');
     for (final row in resolvedList) {
       final id = row[foreignFieldName];
       if (id == null) continue;
-      mappedLists.update(
-        id,
-        (value) => [...value, row],
-        ifAbsent: () => [row],
-      );
+      mappedLists.update(id, (value) => [...value, row], ifAbsent: () => [row]);
     }
 
     return {relativeRelationTable.queryPrefix: mappedLists};
@@ -1340,7 +1318,8 @@ Current type was $T''');
   Map<String, dynamic>? _resolvePrefixedQueryRow(
     Table table,
     Map<String, dynamic> rawRow,
-    Map<String, Map<Object, List<Map<String, dynamic>>>> resolvedListRelations, {
+    Map<String, Map<Object, List<Map<String, dynamic>>>>
+    resolvedListRelations, {
     Include? include,
   }) {
     final resolvedTableRow = _createColumnMapFromQueryAliasColumns(
@@ -1505,10 +1484,7 @@ Current type was $T''');
 }
 
 class _GeneratedStatement {
-  const _GeneratedStatement({
-    required this.sql,
-    this.parameters,
-  });
+  const _GeneratedStatement({required this.sql, this.parameters});
 
   final String sql;
   final QueryParameters? parameters;
@@ -1517,20 +1493,14 @@ class _GeneratedStatement {
 const _missingQueryValue = Object();
 
 class _QueryValueLookup {
-  const _QueryValueLookup({
-    required this.found,
-    required this.value,
-  });
+  const _QueryValueLookup({required this.found, required this.value});
 
   final bool found;
   final Object? value;
 }
 
 class _ColumnSqlExpression extends Expression<String> {
-  const _ColumnSqlExpression(
-    super.expression,
-    this._columns,
-  );
+  const _ColumnSqlExpression(super.expression, this._columns);
 
   final List<Column> _columns;
 

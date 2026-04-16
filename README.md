@@ -79,8 +79,8 @@ Primary implementation repository for the Firebird-native Serverpod backend.
   - object includes through Firebird-native left joins
   - list includes through follow-up Firebird queries
   - nested list resolution over included object graphs
-  - explicit rejection of per-parent `IncludeList` pagination until the
-    Firebird path grows a dedicated windowing strategy
+  - per-parent `IncludeList.limit` and `IncludeList.offset` through a
+    Firebird-native windowed list query
   - explicit lock-policy rejection for PostgreSQL-only lock modes
 - Live prototype transport using the local `fbdb` package that proves:
   - real `fbclient` attachment
@@ -185,9 +185,9 @@ currently stays within single-table CRUD plus `lockRows(...)` for
 `ignoreConflicts` strategy remain later slices.
 
 The relation-loading suite follows the same serial live-suite policy. The
-current baseline supports object includes and list includes, but it still
-rejects `IncludeList.limit` and `IncludeList.offset` because Firebird does not
-yet have a dedicated per-parent windowing implementation in this adapter.
+current baseline supports object includes, list includes, and per-parent
+`IncludeList.limit` / `offset` through a dedicated Firebird windowed relation
+query.
 
 ## TODO
 
