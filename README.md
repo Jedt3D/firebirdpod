@@ -52,7 +52,8 @@ Primary implementation repository for the Firebird-native Serverpod backend.
   - placeholder Serverpod connection, analyzer, and migration interfaces
 - Phase 02 Slice 02B raw Serverpod execution for:
   - `query(...)` and `execute(...)`
-  - `simpleQuery(...)` and `simpleExecute(...)` through the current single-statement path
+  - `simpleQuery(...)` and `simpleExecute(...)` through a Firebird-aware
+    simple-SQL batch splitter with `EXECUTE BLOCK` support
   - explicit Serverpod transaction bridging
   - Serverpod-facing database-result wrapping
   - Firebird transaction savepoints and runtime parameters through the Serverpod wrapper
@@ -98,6 +99,16 @@ Primary implementation repository for the Firebird-native Serverpod backend.
   - deterministic unit coverage for supported SQL generation
   - explicit rejection of unsupported first-slice features such as non-public
     schemas, tablespaces, vector types, partial indexes, and UUID v7 defaults
+- Phase 03 Slice 03B migration-execution baseline for:
+  - batch-aware `simpleQuery(...)` and `simpleExecute(...)` execution for
+    Firebird migration SQL
+  - explicit Firebird migration windows through
+    `FirebirdServerpodMigrationRunner`
+  - committed bootstrap of the migration lock table and singleton lock row
+  - one-migration-at-a-time serialization through `FOR UPDATE WITH LOCK`
+  - live rollback proof for DDL inside the migration transaction
+  - live concurrency proof for the lock window using a second isolate to avoid
+    same-isolate blocking FFI deadlock in the test harness
 - Live prototype transport using the local `fbdb` package that proves:
   - real `fbclient` attachment
   - prepared statement execution through the seam
@@ -214,6 +225,15 @@ The minimal app proof follows the same live-suite policy and currently proves:
 - transactional read work against the native `employee.fdb` sample database
 - clean `pod.start()` after proof-only bootstrap of
   `serverpod_runtime_settings` and `serverpod_migrations`
+
+The migration-runner suite follows the same live-suite policy and currently
+proves:
+
+- rollback of migration-window DDL on failure
+- serialized migration windows on one shared Firebird database
+- batch execution for ordinary `;`-separated SQL and `EXECUTE BLOCK`
+- a Firebird-native migration policy where metadata bootstrap is committed
+  before the lock window starts
 
 The runnable proof example lives at:
 

@@ -4,8 +4,11 @@ import 'package:serverpod_database/serverpod_database.dart';
 import 'package:serverpod_serialization/serverpod_serialization.dart';
 import 'package:serverpod_shared/serverpod_shared.dart';
 
+import '../runtime/firebird_connection.dart';
 import '../runtime/firebird_execution_result.dart';
+import '../runtime/firebird_transaction.dart';
 import '../runtime/firebird_transaction_settings.dart';
+import '../sql/firebird_simple_sql_batch.dart';
 import '../sql/firebird_statement_parameters.dart';
 import 'firebird_serverpod_database_result.dart';
 import 'firebird_serverpod_pool_manager.dart';
@@ -576,12 +579,28 @@ class FirebirdServerpodDatabaseConnection
     int? timeoutInSeconds,
     Transaction? transaction,
   }) async {
-    return this.query(
-      session,
-      query,
-      timeoutInSeconds: timeoutInSeconds,
-      transaction: transaction,
-    );
+    final stopwatch = Stopwatch()..start();
+
+    try {
+      final result = FirebirdServerpodDatabaseResult(
+        await _executeSimpleBatchRaw(
+          session,
+          query,
+          timeoutInSeconds: timeoutInSeconds,
+          transaction: transaction,
+        ),
+      );
+      _logQuery(
+        session,
+        query,
+        stopwatch,
+        numRowsAffected: result.affectedRowCount,
+      );
+      return result;
+    } catch (error, stackTrace) {
+      _logQuery(session, query, stopwatch, exception: error, trace: stackTrace);
+      rethrow;
+    }
   }
 
   @override
@@ -651,12 +670,22 @@ class FirebirdServerpodDatabaseConnection
     int? timeoutInSeconds,
     Transaction? transaction,
   }) async {
-    return execute(
-      session,
-      query,
-      timeoutInSeconds: timeoutInSeconds,
-      transaction: transaction,
-    );
+    final stopwatch = Stopwatch()..start();
+
+    try {
+      final result = await _executeSimpleBatchRaw(
+        session,
+        query,
+        timeoutInSeconds: timeoutInSeconds,
+        transaction: transaction,
+      );
+      final affectedRows = result.affectedRows ?? result.rows.length;
+      _logQuery(session, query, stopwatch, numRowsAffected: affectedRows);
+      return affectedRows;
+    } catch (error, stackTrace) {
+      _logQuery(session, query, stopwatch, exception: error, trace: stackTrace);
+      rethrow;
+    }
   }
 
   @override
@@ -722,6 +751,51 @@ class FirebirdServerpodDatabaseConnection
     }
   }
 
+  Future<FirebirdExecutionResult> _executeSimpleBatchRaw(
+    DatabaseSession session,
+    String query, {
+    required int? timeoutInSeconds,
+    required Transaction? transaction,
+  }) async {
+    final statements = splitFirebirdSimpleSqlBatch(query);
+    if (statements.isEmpty) {
+      return const FirebirdExecutionResult(affectedRows: 0);
+    }
+
+    if (statements.length == 1) {
+      return _executeRaw(
+        session,
+        statements.single,
+        timeoutInSeconds: timeoutInSeconds,
+        transaction: transaction,
+      );
+    }
+
+    final timeout = _resolveTimeout(timeoutInSeconds);
+    final firebirdTransaction = _castToFirebirdTransaction(transaction);
+
+    if (firebirdTransaction != null) {
+      poolManager.lastDatabaseOperationTime = DateTime.now();
+      return _runSimpleBatchOnTransaction(
+        firebirdTransaction.nativeTransaction,
+        statements,
+        timeout: timeout,
+      );
+    }
+
+    final connection = await poolManager.connect();
+    try {
+      poolManager.lastDatabaseOperationTime = DateTime.now();
+      return await _runSimpleBatchOnConnection(
+        connection,
+        statements,
+        timeout: timeout,
+      );
+    } finally {
+      await connection.close();
+    }
+  }
+
   static FirebirdServerpodTransaction? _castToFirebirdTransaction(
     Transaction? transaction,
   ) {
@@ -759,6 +833,48 @@ class FirebirdServerpodDatabaseConnection
   static Duration? _resolveTimeout(int? timeoutInSeconds) {
     if (timeoutInSeconds == null || timeoutInSeconds <= 0) return null;
     return Duration(seconds: timeoutInSeconds);
+  }
+
+  static Future<FirebirdExecutionResult> _runSimpleBatchOnConnection(
+    FirebirdConnection connection,
+    List<String> statements, {
+    required Duration? timeout,
+  }) async {
+    FirebirdExecutionResult? lastResult;
+    var totalAffectedRows = 0;
+
+    for (final statement in statements) {
+      final result = await connection.execute(statement, timeout: timeout);
+      lastResult = result;
+      totalAffectedRows =
+          totalAffectedRows + (result.affectedRows ?? result.rows.length);
+    }
+
+    return FirebirdExecutionResult(
+      affectedRows: totalAffectedRows,
+      rows: lastResult?.rows ?? const [],
+    );
+  }
+
+  static Future<FirebirdExecutionResult> _runSimpleBatchOnTransaction(
+    FirebirdTransaction transaction,
+    List<String> statements, {
+    required Duration? timeout,
+  }) async {
+    FirebirdExecutionResult? lastResult;
+    var totalAffectedRows = 0;
+
+    for (final statement in statements) {
+      final result = await transaction.execute(statement, timeout: timeout);
+      lastResult = result;
+      totalAffectedRows =
+          totalAffectedRows + (result.affectedRows ?? result.rows.length);
+    }
+
+    return FirebirdExecutionResult(
+      affectedRows: totalAffectedRows,
+      rows: lastResult?.rows ?? const [],
+    );
   }
 
   void _ensureValueEncoderConfigured() {

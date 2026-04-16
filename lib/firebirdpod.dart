@@ -30,4 +30,5 @@ export 'src/sql/firebird_parameter_style.dart';
 export 'src/sql/firebird_prepared_sql.dart';
 export 'src/sql/firebird_query_compile_exception.dart';
 export 'src/sql/firebird_query_compiler.dart';
+export 'src/sql/firebird_simple_sql_batch.dart';
 export 'src/sql/firebird_statement_parameters.dart';
