@@ -8,6 +8,23 @@ Primary implementation repository for the Firebird-native Serverpod backend.
 - Firebird-native schema and migration support
 - Fixture and native-schema work for repeatable testing
 
+## Current Phase Status
+
+- Phase 01 is complete:
+  - core Firebird adapter, direct `fbclient` transport, transaction policy, and
+    lifecycle stress coverage
+- Phase 02 is complete through Slice 02E:
+  - Serverpod runtime dialect registration
+  - raw and generated read/write execution
+  - relation loading, relation-aware filtering and sorting, and the minimal
+    Firebird-backed Serverpod app proof
+- Phase 03 is complete through Slice 03D:
+  - Firebird-native schema generation
+  - migration execution and locking
+  - schema drift analysis
+  - converted and curated sample-database validation
+- Phase 04 module support and admin work is the next major frontier
+
 ## Current Implementation Slices
 
 - Dart package bootstrap for new backend-facing code in:
@@ -49,7 +66,7 @@ Primary implementation repository for the Firebird-native Serverpod backend.
   - Firebird Serverpod config parsing
   - Firebird dialect registration
   - Firebird provider and pool-manager creation
-  - placeholder Serverpod connection, analyzer, and migration interfaces
+  - Firebird Serverpod connection, analyzer, and migration integration entry points
 - Phase 02 Slice 02B raw Serverpod execution for:
   - `query(...)` and `execute(...)`
   - `simpleQuery(...)` and `simpleExecute(...)` through a Firebird-aware
@@ -220,20 +237,24 @@ rejected by the local Firebird environment.
 The pooled-reset integration test follows the same policy and uses dedicated
 tables inside the shared Firebird test database.
 
-The first generated read-path suite follows the same serial live-suite policy
-and currently stays within single-table reads. Includes and relation-aware
-generated queries remain a later slice.
+The generated read-path suite follows the same serial live-suite policy and
+currently proves:
+
+- single-table generated reads, pagination, and `findById(...)`
+- Firebird-native `count(...)`
+- explicit `FOR UPDATE WITH LOCK` support for generated reads
+
+The relation-loading suite extends that baseline and currently proves:
+
+- object includes and list includes
+- hidden auto-join object-relation filtering and sorting
+- many-relation filter and sort semantics
+- per-parent `IncludeList.limit` and `IncludeList.offset`
 
 The generated write-path suite follows the same serial live-suite policy and
 currently stays within single-table CRUD plus `lockRows(...)` for
 `LockMode.forUpdate`. Includes, relation-aware mutations, and a Firebird-native
 `ignoreConflicts` strategy remain later slices.
-
-The relation-loading suite follows the same serial live-suite policy. The
-current baseline supports object includes, hidden auto-join object filtering
-and sorting, many-relation filter and sort semantics, list includes, and
-per-parent `IncludeList.limit` / `offset` through a dedicated Firebird
-windowed relation query.
 
 The minimal app proof follows the same live-suite policy and currently proves:
 
