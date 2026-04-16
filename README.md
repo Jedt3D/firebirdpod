@@ -83,6 +83,10 @@ Primary implementation repository for the Firebird-native Serverpod backend.
   - per-parent `IncludeList.limit` and `IncludeList.offset` through a
     Firebird-native windowed list query
   - explicit lock-policy rejection for PostgreSQL-only lock modes
+  - a minimal Firebird-backed Serverpod app proof against `employee.fdb`
+    through a real `Serverpod` object, `Session`, and hand-wired endpoint
+    dispatch without pretending that full `pod.start()` is ready on the sample
+    database
 - Live prototype transport using the local `fbdb` package that proves:
   - real `fbclient` attachment
   - prepared statement execution through the seam
@@ -189,6 +193,17 @@ The relation-loading suite follows the same serial live-suite policy. The
 current baseline supports object includes, list includes, and per-parent
 `IncludeList.limit` / `offset` through a dedicated Firebird windowed relation
 query.
+
+The minimal app proof follows the same live-suite policy and currently proves:
+
+- Firebird dialect registration inside a real `Serverpod` object
+- `Session` creation without calling `pod.start()`
+- endpoint dispatch into Firebird-backed `session.db.unsafeQuery(...)`
+- transactional read work against the native `employee.fdb` sample database
+
+The runnable proof example lives at:
+
+- `/Users/worajedt/GitHub/FireDart/firebirdpod/example/serverpod_employee_proof.dart`
 
 ## TODO
 
