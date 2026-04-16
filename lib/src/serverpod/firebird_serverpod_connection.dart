@@ -1026,31 +1026,69 @@ Current type was $T''');
     required List<Order>? orderBy,
     required Include? include,
   }) {
-    if (where != null && _referencesForeignTable(table, where.columns)) {
+    final allowedReadTables = _allowedGeneratedReadTables(table, include);
+
+    if (where != null &&
+        _referencesUnsupportedReadTables(where.columns, allowedReadTables)) {
       throw UnsupportedError(
-        'Firebird generated reads do not yet support relation-based WHERE '
-        'expressions. Use base-table filters until join-aware filtering lands.',
+        'Firebird generated reads currently support relation-based WHERE '
+        'expressions only for joined object relations that are present in '
+        'include. List-relation filters and hidden auto-joins are still '
+        'outside the Slice 02E baseline.',
       );
     }
 
     if (orderBy != null &&
-        _referencesForeignTable(table, orderBy.map((entry) => entry.column))) {
+        _referencesUnsupportedReadTables(
+          orderBy.map((entry) => entry.column),
+          allowedReadTables,
+        )) {
       throw UnsupportedError(
-        'Firebird generated reads do not yet support relation-based ORDER BY '
-        'expressions. Use base-table ordering until join-aware sorting lands.',
+        'Firebird generated reads currently support relation-based ORDER BY '
+        'only for joined object relations that are present in include. '
+        'List-relation sorting and hidden auto-joins are still outside the '
+        'Slice 02E baseline.',
       );
     }
   }
 
-  bool _referencesForeignTable(Table table, Iterable<Column> columns) {
+  Set<String> _allowedGeneratedReadTables(Table table, Include? include) {
+    final allowed = <String>{_tableIdentity(table)};
+
+    void visitInclude(Table currentTable, Include? currentInclude) {
+      if (currentInclude == null) return;
+
+      currentInclude.includes.forEach((relationField, relationInclude) {
+        if (relationInclude == null || relationInclude is IncludeList) {
+          return;
+        }
+
+        final relationTable = currentTable.getRelationTable(relationField);
+        if (relationTable == null) return;
+
+        allowed.add(_tableIdentity(relationTable));
+        visitInclude(relationTable, relationInclude);
+      });
+    }
+
+    visitInclude(table, include);
+    return allowed;
+  }
+
+  bool _referencesUnsupportedReadTables(
+    Iterable<Column> columns,
+    Set<String> allowedTables,
+  ) {
     for (final column in columns) {
-      if (column.table.tableName != table.tableName ||
-          column.table.queryPrefix != table.queryPrefix) {
+      if (!allowedTables.contains(_tableIdentity(column.table))) {
         return true;
       }
     }
     return false;
   }
+
+  String _tableIdentity(Table table) =>
+      '${table.tableName}::${table.queryPrefix}';
 
   Future<List<T>> _deserializePrefixedRows<T extends TableRow>(
     DatabaseSession session, {

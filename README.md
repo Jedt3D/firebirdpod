@@ -77,6 +77,7 @@ Primary implementation repository for the Firebird-native Serverpod backend.
     policy is designed
 - Phase 02 Slice 02E relation-loading baseline for:
   - object includes through Firebird-native left joins
+  - relation-aware `where` and `orderBy` for joined object includes
   - list includes through follow-up Firebird queries
   - nested list resolution over included object graphs
   - per-parent `IncludeList.limit` and `IncludeList.offset` through a

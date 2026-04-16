@@ -425,6 +425,65 @@ void main() {
       },
     );
 
+    test('find filters by included object relation columns', () async {
+      if (!shouldRunDirectIntegrationTests()) {
+        return;
+      }
+
+      final session = _TestDatabaseSession();
+      final rows = await connection.find<_AuthorRow>(
+        session,
+        where: authors.company.name.equals('Acme'),
+        include: _AuthorInclude._(company: _CompanyInclude()),
+      );
+
+      expect(rows, hasLength(1));
+      expect(rows.single.name, 'Alice');
+      expect(rows.single.company?.name, 'Acme');
+    });
+
+    test('find orders by included object relation columns', () async {
+      if (!shouldRunDirectIntegrationTests()) {
+        return;
+      }
+
+      final session = _TestDatabaseSession();
+      final rows = await connection.find<_AuthorRow>(
+        session,
+        where: authors.companyId.notEquals(null),
+        orderBy: authors.company.name.desc(),
+        include: _AuthorInclude._(company: _CompanyInclude()),
+      );
+
+      expect(rows.map((row) => row.name), ['Cara', 'Alice']);
+      expect(rows.map((row) => row.company?.name), ['Contoso', 'Acme']);
+    });
+
+    test(
+      'find rejects relation filters without the matching object include',
+      () async {
+        if (!shouldRunDirectIntegrationTests()) {
+          return;
+        }
+
+        final session = _TestDatabaseSession();
+
+        await expectLater(
+          () => connection.find<_AuthorRow>(
+            session,
+            where: authors.company.name.equals('Acme'),
+          ),
+          throwsA(
+            isA<UnsupportedError>().having(
+              (error) => error.message,
+              'message',
+              contains('joined object relations'),
+            ),
+          ),
+        );
+      },
+    );
+
     test('find paginates IncludeList per parent with limit', () async {
       if (!shouldRunDirectIntegrationTests()) {
         return;
