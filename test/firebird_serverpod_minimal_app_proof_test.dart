@@ -83,5 +83,37 @@ void main() {
           ? false
           : 'set FIREBIRDPOD_RUN_FBCLIENT_DIRECT=1 to run live Firebird proofs',
     );
+
+    test(
+      'starts a real Serverpod after bootstrapping the Firebird runtime table',
+      () async {
+        if (!shouldRunDirectIntegrationTests()) {
+          return;
+        }
+
+        final startedApp = FirebirdServerpodEmployeeProofApp.create(
+          databasePath: firebirdTestDatabasePath(),
+          user: firebirdTestUser(),
+          password: firebirdTestPassword(),
+          fbClientLibraryPath: firebirdClientLibraryPath(),
+        );
+
+        try {
+          await startedApp.startWithBootstrap();
+
+          expect(startedApp.pod, isA<Serverpod>());
+          expect(startedApp.pod.isStartupComplete, isTrue);
+          expect(await startedApp.runtimeSettingsRowCount(), greaterThan(0));
+
+          final overview = await startedApp.databaseOverview();
+          expect(overview['employeeCount'], greaterThan(0));
+        } finally {
+          await startedApp.close();
+        }
+      },
+      skip: shouldRunDirectIntegrationTests()
+          ? false
+          : 'set FIREBIRDPOD_RUN_FBCLIENT_DIRECT=1 to run live Firebird proofs',
+    );
   });
 }

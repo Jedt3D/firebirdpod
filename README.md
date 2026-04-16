@@ -77,16 +77,18 @@ Primary implementation repository for the Firebird-native Serverpod backend.
     policy is designed
 - Phase 02 Slice 02E relation-loading baseline for:
   - object includes through Firebird-native left joins
-  - relation-aware `where` and `orderBy` for joined object includes
+  - hidden auto-joins for object-relation `where` and `orderBy`
+  - many-relation filtering through Firebird-owned `count`, `any`, `none`,
+    and `every` subqueries
+  - many-relation ordering through relation-count subqueries
   - list includes through follow-up Firebird queries
   - nested list resolution over included object graphs
   - per-parent `IncludeList.limit` and `IncludeList.offset` through a
     Firebird-native windowed list query
   - explicit lock-policy rejection for PostgreSQL-only lock modes
   - a minimal Firebird-backed Serverpod app proof against `employee.fdb`
-    through a real `Serverpod` object, `Session`, and hand-wired endpoint
-    dispatch without pretending that full `pod.start()` is ready on the sample
-    database
+    through a real `Serverpod` object, `Session`, hand-wired endpoint
+    dispatch, and a proof-only `pod.start()` bootstrap on the sample database
 - Live prototype transport using the local `fbdb` package that proves:
   - real `fbclient` attachment
   - prepared statement execution through the seam
@@ -190,16 +192,19 @@ currently stays within single-table CRUD plus `lockRows(...)` for
 `ignoreConflicts` strategy remain later slices.
 
 The relation-loading suite follows the same serial live-suite policy. The
-current baseline supports object includes, list includes, and per-parent
-`IncludeList.limit` / `offset` through a dedicated Firebird windowed relation
-query.
+current baseline supports object includes, hidden auto-join object filtering
+and sorting, many-relation filter and sort semantics, list includes, and
+per-parent `IncludeList.limit` / `offset` through a dedicated Firebird
+windowed relation query.
 
 The minimal app proof follows the same live-suite policy and currently proves:
 
 - Firebird dialect registration inside a real `Serverpod` object
-- `Session` creation without calling `pod.start()`
+- `Session` creation before calling `pod.start()`
 - endpoint dispatch into Firebird-backed `session.db.unsafeQuery(...)`
 - transactional read work against the native `employee.fdb` sample database
+- clean `pod.start()` after proof-only bootstrap of
+  `serverpod_runtime_settings` and `serverpod_migrations`
 
 The runnable proof example lives at:
 

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:serverpod_database/serverpod_database.dart';
 import 'package:serverpod_serialization/serverpod_serialization.dart';
 import 'package:serverpod_shared/serverpod_shared.dart';
@@ -1026,69 +1028,36 @@ Current type was $T''');
     required List<Order>? orderBy,
     required Include? include,
   }) {
-    final allowedReadTables = _allowedGeneratedReadTables(table, include);
+    final baseTableName = table.tableName;
 
-    if (where != null &&
-        _referencesUnsupportedReadTables(where.columns, allowedReadTables)) {
-      throw UnsupportedError(
-        'Firebird generated reads currently support relation-based WHERE '
-        'expressions only for joined object relations that are present in '
-        'include. List-relation filters and hidden auto-joins are still '
-        'outside the Slice 02E baseline.',
-      );
-    }
-
-    if (orderBy != null &&
-        _referencesUnsupportedReadTables(
-          orderBy.map((entry) => entry.column),
-          allowedReadTables,
-        )) {
-      throw UnsupportedError(
-        'Firebird generated reads currently support relation-based ORDER BY '
-        'only for joined object relations that are present in include. '
-        'List-relation sorting and hidden auto-joins are still outside the '
-        'Slice 02E baseline.',
-      );
-    }
-  }
-
-  Set<String> _allowedGeneratedReadTables(Table table, Include? include) {
-    final allowed = <String>{_tableIdentity(table)};
-
-    void visitInclude(Table currentTable, Include? currentInclude) {
-      if (currentInclude == null) return;
-
-      currentInclude.includes.forEach((relationField, relationInclude) {
-        if (relationInclude == null || relationInclude is IncludeList) {
-          return;
+    if (where != null) {
+      for (final column in where.columns) {
+        if (!_columnHasBaseTable(column, baseTableName)) {
+          throw FormatException(
+            'Firebird generated reads only support relation expressions that '
+            'originate from the selected root table "$baseTableName". '
+            'Unsupported WHERE column: $column.',
+          );
         }
-
-        final relationTable = currentTable.getRelationTable(relationField);
-        if (relationTable == null) return;
-
-        allowed.add(_tableIdentity(relationTable));
-        visitInclude(relationTable, relationInclude);
-      });
-    }
-
-    visitInclude(table, include);
-    return allowed;
-  }
-
-  bool _referencesUnsupportedReadTables(
-    Iterable<Column> columns,
-    Set<String> allowedTables,
-  ) {
-    for (final column in columns) {
-      if (!allowedTables.contains(_tableIdentity(column.table))) {
-        return true;
       }
     }
-    return false;
+
+    if (orderBy != null) {
+      for (final column in orderBy.map((entry) => entry.column)) {
+        if (!_columnHasBaseTable(column, baseTableName)) {
+          throw FormatException(
+            'Firebird generated reads only support relation expressions that '
+            'originate from the selected root table "$baseTableName". '
+            'Unsupported ORDER BY column: $column.',
+          );
+        }
+      }
+    }
   }
 
-  String _tableIdentity(Table table) =>
-      '${table.tableName}::${table.queryPrefix}';
+  bool _columnHasBaseTable(Column column, String tableName) {
+    return column.queryAlias.startsWith(RegExp('$tableName[_\\.]'));
+  }
 
   Future<List<T>> _deserializePrefixedRows<T extends TableRow>(
     DatabaseSession session, {
@@ -1134,7 +1103,10 @@ Current type was $T''');
         allowDirectColumnName: true,
       );
       if (value.found) {
-        resolved[column.fieldName] = value.value;
+        resolved[column.fieldName] = _decodeResolvedColumnValue(
+          column,
+          value.value,
+        );
       }
     }
 
@@ -1404,10 +1376,23 @@ Current type was $T''');
     for (final column in columns) {
       final value = _lookupQueryValue(rawRow, column, prefixed: true);
       if (value.found && value.value != null) {
-        columnMap[column.fieldName] = value.value;
+        columnMap[column.fieldName] = _decodeResolvedColumnValue(
+          column,
+          value.value,
+        );
       }
     }
     return columnMap;
+  }
+
+  Object? _decodeResolvedColumnValue(Column column, Object? value) {
+    if (value == null) return null;
+
+    if (column is ColumnSerializable && value is String) {
+      return jsonDecode(value);
+    }
+
+    return value;
   }
 
   _QueryValueLookup _lookupQueryValue(

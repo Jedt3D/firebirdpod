@@ -1,4 +1,7 @@
+// ignore_for_file: implementation_imports
+
 import 'package:serverpod_database/serverpod_database.dart';
+import 'package:serverpod_database/src/concepts/table_relation.dart';
 import 'package:serverpod_shared/serverpod_shared.dart';
 
 /// Firebird-native select builder for the Serverpod runtime bridge.
@@ -6,9 +9,10 @@ import 'package:serverpod_shared/serverpod_shared.dart';
 /// The builder now covers:
 ///
 /// - Slice 02C single-table reads and counts
-/// - Slice 02E object-include joins for generated relation loading
-///
-/// List includes are still handled as follow-up queries in the connection layer.
+/// - Slice 02E object includes and hidden auto-joins for relation filters
+///   and ordering
+/// - Slice 02E many-relation filtering and ordering through Firebird-safe
+///   CTE subqueries
 class FirebirdSelectQueryBuilder {
   FirebirdSelectQueryBuilder({required Table table})
     : _table = table,
@@ -29,7 +33,13 @@ class FirebirdSelectQueryBuilder {
   int? _limit;
   int? _offset;
   Expression? _where;
+  Expression? _manyRelationWhereAddition;
+  bool _forceGroupBy = false;
+  ColumnExpression? _having;
   Include? _include;
+  bool _joinOneLevelManyRelationWhereExpressions = false;
+  bool _wrapWhereInNot = false;
+  TableRelation? _countTableRelation;
   LockMode? _lockMode;
   LockBehavior? _lockBehavior;
 
@@ -67,8 +77,35 @@ class FirebirdSelectQueryBuilder {
     return this;
   }
 
+  FirebirdSelectQueryBuilder withManyRelationWhereAddition(
+    Expression? manyRelationWhereAddition,
+  ) {
+    _manyRelationWhereAddition = manyRelationWhereAddition;
+    return this;
+  }
+
   FirebirdSelectQueryBuilder withInclude(Include? include) {
     _include = include;
+    return this;
+  }
+
+  FirebirdSelectQueryBuilder withHaving(ColumnExpression? having) {
+    _having = having;
+    return this;
+  }
+
+  FirebirdSelectQueryBuilder withCountTableRelation(TableRelation relation) {
+    _countTableRelation = relation;
+    return this;
+  }
+
+  FirebirdSelectQueryBuilder enableOneLevelWhereExpressionJoins() {
+    _joinOneLevelManyRelationWhereExpressions = true;
+    return this;
+  }
+
+  FirebirdSelectQueryBuilder forceGroupBy() {
+    _forceGroupBy = true;
     return this;
   }
 
@@ -81,27 +118,69 @@ class FirebirdSelectQueryBuilder {
     return this;
   }
 
+  FirebirdSelectQueryBuilder _wrapWhereInNotStatement() {
+    _wrapWhereInNot = true;
+    return this;
+  }
+
   String build() {
-    final includeTables = _gatherIncludeObjectTables(_include, _table);
     final selectColumns = [
       ..._fields,
       ..._gatherIncludeColumns(_include, _table),
     ];
-    final select = selectColumns.map(_buildSelectField).join(', ');
-    final joins = _gatherIncludeJoinStatements(includeTables);
-    final buffer = StringBuffer(
-      'SELECT $select FROM ${_renderTableReference(_table)}',
+    final subQueries = _FirebirdSubQueries.gatherSubQueries(
+      orderBy: _orderBy,
+      where: _where,
     );
+    final select = _buildSelectStatement(
+      selectColumns,
+      countTableRelation: _countTableRelation,
+    );
+    final joins = _buildJoinQuery(
+      where: _where,
+      manyRelationWhereAddition: _manyRelationWhereAddition,
+      having: _having,
+      orderBy: _orderBy,
+      include: _include,
+      subQueries: subQueries,
+      countTableRelation: _countTableRelation,
+      joinOneLevelManyRelations: _joinOneLevelManyRelationWhereExpressions,
+    );
+    final groupBy = _buildGroupByQuery(
+      selectColumns,
+      having: _having,
+      whereAddition: _manyRelationWhereAddition,
+      countTableRelation: _countTableRelation,
+      forceGroupBy: _forceGroupBy,
+    );
+    final where = _buildWhereQuery(
+      where: _where,
+      manyRelationWhereAddition: _manyRelationWhereAddition,
+      subQueries: subQueries,
+      wrapWhereInNot: _wrapWhereInNot,
+    );
+    final orderBy = _buildOrderByQuery(orderBy: _orderBy, subQueries: subQueries);
 
-    if (joins.isNotEmpty) {
-      buffer.write(' ${joins.values.join(' ')}');
+    final buffer = StringBuffer();
+    if (subQueries != null) {
+      buffer.write('WITH ${subQueries.buildQueries()} ');
     }
-
-    if (_where != null) {
-      buffer.write(' WHERE ${_renderExpression(_where!)}');
+    buffer.write('SELECT $select');
+    buffer.write(' FROM ${_renderTableReference(_table)}');
+    if (joins != null) {
+      buffer.write(' $joins');
     }
-
-    final orderBy = _buildOrderByClause();
+    if (where != null) {
+      buffer.write(' WHERE $where');
+    }
+    if (groupBy != null) {
+      buffer.write(' GROUP BY $groupBy');
+    }
+    if (_having != null) {
+      buffer.write(
+        ' HAVING ${_normalizeQualifiedColumnReferences(_having.toString())}',
+      );
+    }
     if (orderBy != null) {
       buffer.write(' ORDER BY $orderBy');
     }
@@ -124,18 +203,196 @@ class FirebirdSelectQueryBuilder {
       column.fieldQueryAlias,
       DatabaseConstants.pgsqlMaxNameLimitation,
     );
-    return '${_renderColumn(column)} AS "${_escapeAlias(alias)}"';
+    return '${_renderColumn(column)} AS ${_renderAlias(alias)}';
   }
 
-  String? _buildOrderByClause() {
-    final orderBy = _orderBy;
+  String _buildSelectStatement(
+    List<Column> selectColumns, {
+    TableRelation? countTableRelation,
+  }) {
+    final entries = <String>[
+      for (final column in selectColumns) _buildSelectField(column),
+    ];
+
+    if (countTableRelation != null) {
+      entries.add(
+        'COUNT(${_normalizeQualifiedColumnReferences(countTableRelation.foreignFieldNameWithJoins)}) '
+        'AS ${_renderAlias('count')}',
+      );
+    }
+
+    return entries.join(', ');
+  }
+
+  String? _buildJoinQuery({
+    Expression? where,
+    Expression? manyRelationWhereAddition,
+    ColumnExpression? having,
+    List<Order>? orderBy,
+    Include? include,
+    _FirebirdSubQueries? subQueries,
+    TableRelation? countTableRelation,
+    bool joinOneLevelManyRelations = false,
+  }) {
+    final joins = <String, String>{};
+    if (where != null) {
+      joins.addAll(
+        _gatherWhereJoins(
+          where.columns,
+          joinOneLevelManyRelations: joinOneLevelManyRelations,
+        ),
+      );
+    }
+
+    if (manyRelationWhereAddition != null) {
+      joins.addAll(_gatherWhereAdditionJoins(manyRelationWhereAddition.columns));
+    }
+
+    if (orderBy != null) {
+      joins.addAll(_gatherOrderByJoins(orderBy, subQueries: subQueries));
+    }
+
+    if (include != null) {
+      joins.addAll(_gatherIncludeJoins(include));
+    }
+
+    if (countTableRelation != null) {
+      joins[countTableRelation.relationQueryAlias] = _buildJoinStatement(
+        tableRelation: countTableRelation,
+      );
+    }
+
+    if (having != null) {
+      final havingJoin = _buildHavingJoin(having);
+      joins[havingJoin.key] = havingJoin.value;
+    }
+
+    if (joins.isEmpty) return null;
+    return joins.values.join(' ');
+  }
+
+  String? _buildGroupByQuery(
+    List<Column> selectFields, {
+    Expression? having,
+    Expression? whereAddition,
+    TableRelation? countTableRelation,
+    bool forceGroupBy = false,
+  }) {
+    if (countTableRelation == null &&
+        having == null &&
+        whereAddition == null &&
+        !forceGroupBy) {
+      return null;
+    }
+
+    return selectFields.map(_renderColumn).join(', ');
+  }
+
+  String? _buildWhereQuery({
+    Expression? where,
+    Expression? manyRelationWhereAddition,
+    _FirebirdSubQueries? subQueries,
+    bool wrapWhereInNot = false,
+  }) {
+    final buffer = StringBuffer();
+
+    if (where != null) {
+      if (wrapWhereInNot) {
+        buffer.write('NOT ');
+      }
+      buffer.write(_resolveWhereQuery(where: where, subQueries: subQueries));
+    }
+
+    if (manyRelationWhereAddition != null) {
+      if (buffer.length > 0) {
+        buffer.write(manyRelationWhereAddition is EveryExpression ? ' OR ' : ' AND ');
+      }
+      buffer.write(
+        _normalizeQualifiedColumnReferences(manyRelationWhereAddition.toString()),
+      );
+    }
+
+    return buffer.length == 0 ? null : buffer.toString();
+  }
+
+  String _resolveWhereQuery({
+    required Expression<dynamic> where,
+    _FirebirdSubQueries? subQueries,
+  }) {
+    if (where is TwoPartExpression) {
+      return '(${where.subExpressions.map((expression) => _resolveWhereQuery(where: expression, subQueries: subQueries)).join(' ${where.operator} ')})';
+    }
+
+    if (where is NotExpression) {
+      return where.wrapExpression(
+        _resolveWhereQuery(where: where.subExpression, subQueries: subQueries),
+      );
+    }
+
+    if (where is ColumnExpression && where.isManyRelationExpression) {
+      final tableRelation = where.column.table.tableRelation;
+      if (tableRelation == null) {
+        throw _createStateErrorWithMessage('Table relation is null');
+      }
+
+      final expressionIndex = where.index;
+      if (expressionIndex == null) {
+        throw _createStateErrorWithMessage('Expression index is null');
+      }
+
+      final subQuery = subQueries?._whereCountQueries[expressionIndex];
+      if (subQuery == null) {
+        throw _createStateErrorWithMessage(
+          'Sub query for expression index \'$expressionIndex\' is null',
+        );
+      }
+
+      final parentField = _normalizeQualifiedColumnReferences(
+        tableRelation.fieldNameWithJoins,
+      );
+      final aliasRef =
+          '${_renderAlias(subQuery.alias)}.${_renderAlias(tableRelation.fieldQueryAlias)}';
+
+      if (where is NoneExpression || where is EveryExpression) {
+        return '$parentField NOT IN (SELECT $aliasRef FROM ${_renderAlias(subQuery.alias)})';
+      }
+      return '$parentField IN (SELECT $aliasRef FROM ${_renderAlias(subQuery.alias)})';
+    }
+
+    return _normalizeQualifiedColumnReferences(where.toString());
+  }
+
+  String? _buildOrderByQuery({
+    List<Order>? orderBy,
+    _FirebirdSubQueries? subQueries,
+  }) {
     if (orderBy == null || orderBy.isEmpty) return null;
-    return orderBy
-        .map(
-          (entry) =>
-              '${_renderColumn(entry.column)} ${entry.orderDescending ? 'DESC' : 'ASC'}',
-        )
-        .join(', ');
+
+    final parts = <String>[];
+    for (var index = 0; index < orderBy.length; index++) {
+      final order = orderBy[index];
+      final column = order.column;
+      if (column is ColumnCount) {
+        final queryAlias = subQueries?._orderByQueries[index]?.alias;
+        if (queryAlias == null) {
+          throw _createStateErrorWithMessage(
+            'Query alias for order-by sub query is null.',
+          );
+        }
+        final direction = order.orderDescending
+            ? 'DESC NULLS LAST'
+            : 'ASC NULLS FIRST';
+        parts.add(
+          '${_renderAlias(queryAlias)}.${_renderAlias('count')} $direction',
+        );
+      } else {
+        final direction = order.orderDescending
+            ? 'DESC NULLS FIRST'
+            : 'ASC NULLS LAST';
+        parts.add('${_renderColumn(column)} $direction');
+      }
+    }
+    return parts.join(', ');
   }
 
   String? _buildPaginationClause() {
@@ -179,26 +436,35 @@ class FirebirdSelectQueryBuilder {
     return 'FOR UPDATE WITH LOCK$skipLocked';
   }
 
-  Map<String, String> _gatherIncludeJoinStatements(List<Table> includeTables) {
+  Map<String, String> _gatherWhereJoins(
+    List<Column> columns, {
+    bool joinOneLevelManyRelations = false,
+  }) {
     final joins = <String, String>{};
-    if (includeTables.isEmpty) return joins;
+    final columnsWithRelations = columns.where(
+      (column) => column.table.tableRelation != null,
+    );
 
-    final tablesByQueryPrefix = <String, Table>{
-      _table.queryPrefix: _table,
-      for (final table in includeTables) table.queryPrefix: table,
-    };
+    for (final column in columnsWithRelations) {
+      final tableRelation = column.table.tableRelation;
+      if (tableRelation == null) continue;
 
-    for (final table in includeTables) {
-      final relation = table.tableRelation;
-      if (relation == null) continue;
+      final manyRelationColumn = column is ColumnCount;
+      final subRelations = tableRelation.getRelations;
+      final oneLevelManyRelation =
+          manyRelationColumn && subRelations.length == 1;
+      final skipLast =
+          manyRelationColumn &&
+          !(oneLevelManyRelation && joinOneLevelManyRelations);
+      final lastEntryIndex = subRelations.length - 1;
 
-      for (final subRelation in relation.getRelations) {
-        final foreignTable =
-            tablesByQueryPrefix[subRelation.relationQueryAlias];
-        if (foreignTable == null) continue;
+      for (var index = 0; index < subRelations.length; index++) {
+        final subRelation = subRelations[index];
+        final lastEntry = index == lastEntryIndex;
+        if (lastEntry && skipLast) continue;
+
         joins[subRelation.relationQueryAlias] = _buildJoinStatement(
           tableRelation: subRelation,
-          foreignTable: foreignTable,
         );
       }
     }
@@ -206,30 +472,114 @@ class FirebirdSelectQueryBuilder {
     return joins;
   }
 
-  String _buildJoinStatement({
-    required dynamic tableRelation,
-    required Table foreignTable,
-  }) {
-    final foreignColumn = foreignTable.columns.firstWhere(
-      (column) => column.fieldName == tableRelation.foreignFieldName,
-      orElse: () {
-        throw StateError(
-          'Missing foreign column for relation ${tableRelation.relationQueryAlias}.',
-        );
-      },
+  Map<String, String> _gatherWhereAdditionJoins(
+    List<Column> columns,
+  ) {
+    final joins = <String, String>{};
+    final columnsWithRelations = columns.where(
+      (column) => column.table.tableRelation != null,
     );
 
-    return 'LEFT JOIN ${_renderTableReference(foreignTable)} ON '
-        '${_renderColumn(tableRelation.fieldColumn)} = '
-        '${_renderColumn(foreignColumn)}';
+    for (final column in columnsWithRelations) {
+      final tableRelation = column.table.tableRelation;
+      if (tableRelation == null) continue;
+
+      final lastRelation = tableRelation.lastRelation;
+      joins[lastRelation.relationQueryAlias] = _buildJoinStatement(
+        tableRelation: lastRelation,
+      );
+    }
+
+    return joins;
   }
 
-  String _renderExpression(Expression expression) {
-    var sql = expression.toString();
-    for (final column in expression.columns) {
-      sql = sql.replaceAll(column.toString(), _renderColumn(column));
+  Map<String, String> _gatherOrderByJoins(
+    List<Order> orderBy, {
+    _FirebirdSubQueries? subQueries,
+  }) {
+    final joins = <String, String>{};
+    for (var orderIndex = 0; orderIndex < orderBy.length; orderIndex++) {
+      final order = orderBy[orderIndex];
+      final column = order.column;
+      final tableRelation = column.table.tableRelation;
+      if (tableRelation == null) continue;
+
+      final manyRelationColumn = column is ColumnCount;
+      final subRelations = tableRelation.getRelations;
+      final lastEntryIndex = subRelations.length - 1;
+
+      for (var index = 0; index < subRelations.length; index++) {
+        final subRelation = subRelations[index];
+        final lastEntry = index == lastEntryIndex;
+
+        if (lastEntry && manyRelationColumn) {
+          final queryAlias = subQueries?._orderByQueries[orderIndex]?.alias;
+          if (queryAlias == null) {
+            throw _createStateErrorWithMessage(
+              'Missing query alias for order-by sub query with index $orderIndex.',
+            );
+          }
+          joins[queryAlias] = _buildSubQueryJoinStatement(
+            tableRelation: tableRelation,
+            queryAlias: queryAlias,
+          );
+        } else {
+          joins[subRelation.relationQueryAlias] = _buildJoinStatement(
+            tableRelation: subRelation,
+          );
+        }
+      }
     }
-    return sql;
+
+    return joins;
+  }
+
+  Map<String, String> _gatherIncludeJoins(Include include) {
+    final joins = <String, String>{};
+    final includeTables = _gatherIncludeObjectTables(include, include.table);
+    final tablesWithRelations = includeTables.where(
+      (table) => table.tableRelation != null,
+    );
+
+    for (final table in tablesWithRelations) {
+      final tableRelation = table.tableRelation;
+      for (final subRelation in tableRelation?.getRelations ?? <TableRelation>[]) {
+        joins[subRelation.relationQueryAlias] = _buildJoinStatement(
+          tableRelation: subRelation,
+        );
+      }
+    }
+
+    return joins;
+  }
+
+  MapEntry<String, String> _buildHavingJoin(ColumnExpression having) {
+    final tableRelation = having.column.table.tableRelation;
+    if (tableRelation == null) {
+      throw _createStateErrorWithMessage('Table relation is null.');
+    }
+
+    final lastRelation = tableRelation.lastRelation;
+    return MapEntry(
+      lastRelation.relationQueryAlias,
+      _buildJoinStatement(tableRelation: lastRelation),
+    );
+  }
+
+  String _buildSubQueryJoinStatement({
+    required TableRelation tableRelation,
+    required String queryAlias,
+  }) {
+    return 'LEFT JOIN ${_renderAlias(queryAlias)} ON '
+        '${_normalizeQualifiedColumnReferences(tableRelation.fieldNameWithJoins)} = '
+        '${_renderAlias(queryAlias)}.${_renderAlias(tableRelation.fieldQueryAlias)}';
+  }
+
+  String _buildJoinStatement({required TableRelation tableRelation}) {
+    return 'LEFT JOIN ${_renderSchemaIdentifier(tableRelation.foreignTableName)} '
+        'AS ${_renderAlias(tableRelation.relationQueryAlias)} ON '
+        '${_normalizeQualifiedColumnReferences(tableRelation.fieldNameWithJoins)} = '
+        '${_normalizeQualifiedColumnReferences(tableRelation.foreignFieldNameWithJoins)}';
   }
 
   String _renderColumn(Column column) {
@@ -247,11 +597,7 @@ class FirebirdSelectQueryBuilder {
   }
 
   String _renderAlias(String identifier) {
-    return '"${_escapeAlias(identifier)}"';
-  }
-
-  String _escapeAlias(String identifier) {
-    return identifier.replaceAll('"', '""');
+    return '"${identifier.replaceAll('"', '""')}"';
   }
 }
 
@@ -335,70 +681,92 @@ class FirebirdPerParentIncludeListQueryBuilder {
       ..._fields,
       ..._gatherIncludeColumns(_include, _table),
     ];
-    final joins = _gatherIncludeJoinStatements(
-      _gatherIncludeObjectTables(_include, _table),
-    );
-    final buffer = StringBuffer(
-      'WITH ${_renderAlias(_windowedQueryAlias)} AS ('
-      'SELECT ${_buildSelectList(selectColumns)}'
-      ' FROM ${_renderTableReference(_table)}',
-    );
+    final helper = FirebirdSelectQueryBuilder(table: _table)
+      ..withWhere(_where)
+      ..withOrderBy(_orderBy)
+      ..withInclude(_include);
 
-    if (joins.isNotEmpty) {
-      buffer.write(' ${joins.values.join(' ')}');
-    }
-
-    if (_where != null) {
-      buffer.write(' WHERE ${_renderExpression(_where!)}');
-    }
-
-    buffer.write(') SELECT * FROM ${_renderAlias(_windowedQueryAlias)}');
-    buffer.write(
-      ' WHERE ${_renderAlias(_rowNumberAlias)} ${_buildRowLimitClause()}',
+    final subQueries = _FirebirdSubQueries.gatherSubQueries(
+      orderBy: _orderBy,
+      where: _where,
     );
-    buffer.write(
-      ' ORDER BY ${_renderAlias(_parentIdAlias)}, ${_renderAlias(_rowNumberAlias)}',
+    final joins = helper._buildJoinQuery(
+      where: _where,
+      orderBy: _orderBy,
+      include: _include,
+      subQueries: subQueries,
     );
+    final where = helper._buildWhereQuery(where: _where, subQueries: subQueries);
+    final ctes = <String>[
+      if (subQueries != null) ...subQueries.buildQueryClauses(),
+      '${helper._renderAlias(_windowedQueryAlias)} AS ('
+          'SELECT ${_buildSelectList(helper, selectColumns, subQueries)} '
+          'FROM ${helper._renderTableReference(_table)}'
+          '${joins == null ? '' : ' $joins'}'
+          '${where == null ? '' : ' WHERE $where'}'
+          ')',
+    ];
 
-    return buffer.toString();
+    return 'WITH ${ctes.join(', ')} '
+        'SELECT * FROM ${helper._renderAlias(_windowedQueryAlias)} '
+        'WHERE ${helper._renderAlias(_rowNumberAlias)} ${_buildRowLimitClause()} '
+        'ORDER BY ${helper._renderAlias(_parentIdAlias)}, '
+        '${helper._renderAlias(_rowNumberAlias)}';
   }
 
-  String _buildSelectList(List<Column> selectColumns) {
+  String _buildSelectList(
+    FirebirdSelectQueryBuilder helper,
+    List<Column> selectColumns,
+    _FirebirdSubQueries? subQueries,
+  ) {
     final entries = <String>[
-      for (final column in selectColumns) _buildSelectField(column),
-      '${_renderColumn(_partitionColumn)} AS ${_renderAlias(_parentIdAlias)}',
+      for (final column in selectColumns) helper._buildSelectField(column),
+      '${helper._renderColumn(_partitionColumn)} AS ${helper._renderAlias(_parentIdAlias)}',
       'ROW_NUMBER() OVER ('
-          'PARTITION BY ${_renderColumn(_partitionColumn)}'
-          '${_buildWindowOrderByClause()}'
-          ') AS ${_renderAlias(_rowNumberAlias)}',
+          'PARTITION BY ${helper._renderColumn(_partitionColumn)}'
+          '${_buildWindowOrderByClause(helper, subQueries)}'
+          ') AS ${helper._renderAlias(_rowNumberAlias)}',
     ];
     return entries.join(', ');
   }
 
-  String _buildSelectField(Column column) {
-    final alias = truncateIdentifier(
-      column.fieldQueryAlias,
-      DatabaseConstants.pgsqlMaxNameLimitation,
-    );
-    return '${_renderColumn(column)} AS "${_escapeAlias(alias)}"';
-  }
-
-  String _buildWindowOrderByClause() {
+  String _buildWindowOrderByClause(
+    FirebirdSelectQueryBuilder helper,
+    _FirebirdSubQueries? subQueries,
+  ) {
     final orderByEntries = _effectiveWindowOrderBy();
     if (orderByEntries.isEmpty) return '';
 
-    final sql = orderByEntries
-        .map(
-          (entry) =>
-              '${_renderColumn(entry.column)} ${entry.orderDescending ? 'DESC' : 'ASC'}',
-        )
-        .join(', ');
-    return ' ORDER BY $sql';
+    final clauses = <String>[];
+    for (var index = 0; index < orderByEntries.length; index++) {
+      final order = orderByEntries[index];
+      final column = order.column;
+      if (column is ColumnCount) {
+        final queryAlias = subQueries?._orderByQueries[index]?.alias;
+        if (queryAlias == null) {
+          throw _createStateErrorWithMessage(
+            'Query alias for order-by sub query is null.',
+          );
+        }
+        final direction = order.orderDescending
+            ? 'DESC NULLS LAST'
+            : 'ASC NULLS FIRST';
+        clauses.add(
+          '${helper._renderAlias(queryAlias)}.${helper._renderAlias('count')} $direction',
+        );
+      } else {
+        final direction = order.orderDescending
+            ? 'DESC NULLS FIRST'
+            : 'ASC NULLS LAST';
+        clauses.add('${helper._renderColumn(column)} $direction');
+      }
+    }
+
+    return ' ORDER BY ${clauses.join(', ')}';
   }
 
   List<Order> _effectiveWindowOrderBy() {
     final orderBy = <Order>[...?_orderBy];
-
     final hasPrimaryKeyOrdering = orderBy.any(
       (entry) =>
           entry.column.table.queryPrefix == _table.id.table.queryPrefix &&
@@ -422,81 +790,6 @@ class FirebirdPerParentIncludeListQueryBuilder {
 
     final end = index + _limit!;
     return 'BETWEEN $start AND $end';
-  }
-
-  Map<String, String> _gatherIncludeJoinStatements(List<Table> includeTables) {
-    final joins = <String, String>{};
-    if (includeTables.isEmpty) return joins;
-
-    final tablesByQueryPrefix = <String, Table>{
-      _table.queryPrefix: _table,
-      for (final table in includeTables) table.queryPrefix: table,
-    };
-
-    for (final table in includeTables) {
-      final relation = table.tableRelation;
-      if (relation == null) continue;
-
-      for (final subRelation in relation.getRelations) {
-        final foreignTable =
-            tablesByQueryPrefix[subRelation.relationQueryAlias];
-        if (foreignTable == null) continue;
-        joins[subRelation.relationQueryAlias] = _buildJoinStatement(
-          tableRelation: subRelation,
-          foreignTable: foreignTable,
-        );
-      }
-    }
-
-    return joins;
-  }
-
-  String _buildJoinStatement({
-    required dynamic tableRelation,
-    required Table foreignTable,
-  }) {
-    final foreignColumn = foreignTable.columns.firstWhere(
-      (column) => column.fieldName == tableRelation.foreignFieldName,
-      orElse: () {
-        throw StateError(
-          'Missing foreign column for relation ${tableRelation.relationQueryAlias}.',
-        );
-      },
-    );
-
-    return 'LEFT JOIN ${_renderTableReference(foreignTable)} ON '
-        '${_renderColumn(tableRelation.fieldColumn)} = '
-        '${_renderColumn(foreignColumn)}';
-  }
-
-  String _renderExpression(Expression expression) {
-    var sql = expression.toString();
-    for (final column in expression.columns) {
-      sql = sql.replaceAll(column.toString(), _renderColumn(column));
-    }
-    return sql;
-  }
-
-  String _renderColumn(Column column) {
-    return '${_renderAlias(column.table.queryPrefix)}.'
-        '${_renderSchemaIdentifier(column.columnName)}';
-  }
-
-  String _renderTableReference(Table table) {
-    return '${_renderSchemaIdentifier(table.tableName)} '
-        'AS ${_renderAlias(table.queryPrefix)}';
-  }
-
-  String _renderSchemaIdentifier(String identifier) {
-    return '"${identifier.replaceAll('"', '""').toUpperCase()}"';
-  }
-
-  String _renderAlias(String identifier) {
-    return '"${_escapeAlias(identifier)}"';
-  }
-
-  String _escapeAlias(String identifier) {
-    return identifier.replaceAll('"', '""');
   }
 }
 
@@ -529,56 +822,262 @@ class FirebirdCountQueryBuilder {
   }
 
   String build() {
-    final alias = _alias.replaceAll('"', '""');
+    final sourceQuery = FirebirdSelectQueryBuilder(table: _table)
+        .withSelectFields([_table.id])
+        .withWhere(_where)
+        .withLimit(_limit)
+        .build();
 
-    if (_limit == null) {
-      final buffer = StringBuffer(
-        'SELECT COUNT(*) AS "$alias" '
-        'FROM ${_renderTableReference(_table)}',
-      );
-      if (_where != null) {
-        buffer.write(' WHERE ${_renderExpression(_where!)}');
+    return 'SELECT COUNT(*) AS "${_alias.replaceAll('"', '""')}" '
+        'FROM ($sourceQuery) ${_renderAlias('FIREBIRD_COUNT_SOURCE')}';
+  }
+}
+
+class _FirebirdSubQuery {
+  _FirebirdSubQuery(this.query, this.alias);
+
+  final String query;
+  final String alias;
+}
+
+class _FirebirdSubQueries {
+  static const String orderByPrefix = 'order_by';
+  static const String whereCountPrefix = 'where_count';
+  static const String whereNonePrefix = 'where_none';
+  static const String whereAnyPrefix = 'where_any';
+  static const String whereEveryPrefix = 'where_every';
+
+  final Map<int, _FirebirdSubQuery> _orderByQueries = {};
+  final Map<int, _FirebirdSubQuery> _whereCountQueries = {};
+
+  bool get isEmpty => _orderByQueries.isEmpty && _whereCountQueries.isEmpty;
+
+  static _FirebirdSubQueries? gatherSubQueries({
+    List<Order>? orderBy,
+    Expression? where,
+  }) {
+    final subQueries = _FirebirdSubQueries();
+    if (orderBy != null) {
+      subQueries._orderByQueries.addAll(_gatherOrderBySubQueries(orderBy));
+    }
+    if (where != null) {
+      subQueries._whereCountQueries.addAll(_gatherWhereSubQueries(where));
+    }
+    return subQueries.isEmpty ? null : subQueries;
+  }
+
+  static String buildUniqueQueryAlias(
+    String prefix,
+    String queryAlias,
+    int index,
+  ) {
+    final alias = '${prefix}_${queryAlias}_$index';
+    return truncateIdentifier(alias, DatabaseConstants.pgsqlMaxNameLimitation);
+  }
+
+  static Map<int, _FirebirdSubQuery> _gatherOrderBySubQueries(
+    List<Order> orderBy,
+  ) {
+    final subQueries = <int, _FirebirdSubQuery>{};
+
+    for (var index = 0; index < orderBy.length; index++) {
+      final order = orderBy[index];
+      final column = order.column;
+      if (column is! ColumnCount) continue;
+
+      final tableRelation = column.table.tableRelation;
+      if (tableRelation == null) {
+        throw _createStateErrorWithMessage('Table relation is null');
       }
-      return buffer.toString();
+
+      final relationQueryAlias = tableRelation.relationQueryAlias;
+      final uniqueRelationQueryAlias = buildUniqueQueryAlias(
+        orderByPrefix,
+        relationQueryAlias,
+        index,
+      );
+
+      final subQuery = FirebirdSelectQueryBuilder(table: tableRelation.fieldTable)
+          .withWhere(column.innerWhere)
+          .enableOneLevelWhereExpressionJoins()
+          .withSelectFields([tableRelation.fieldColumn])
+          .withCountTableRelation(tableRelation.lastRelation)
+          .build();
+
+      subQueries[index] = _FirebirdSubQuery(subQuery, uniqueRelationQueryAlias);
     }
 
-    final inner = StringBuffer(
-      'SELECT 1 AS ${_renderSchemaIdentifier('LIMITED_ROW')} '
-      'FROM ${_renderTableReference(_table)}',
+    return subQueries;
+  }
+
+  static Map<int, _FirebirdSubQuery> _gatherWhereSubQueries(Expression where) {
+    final subQueries = <int, _FirebirdSubQuery>{};
+
+    where.forEachDepthFirstIndexed((index, expression) {
+      if (expression is! ColumnExpression || !expression.isManyRelationExpression) {
+        return;
+      }
+
+      final column = expression.column;
+      if (column is! ColumnCount) return;
+
+      final tableRelation = column.table.tableRelation;
+      if (tableRelation == null) {
+        throw _createStateErrorWithMessage('Table relation is null');
+      }
+
+      final relationQueryAlias = tableRelation.relationQueryAlias;
+      expression.index = index;
+
+      if (expression is NoneExpression) {
+        subQueries[index] = _buildWhereNoneSubQuery(
+          relationQueryAlias,
+          index,
+          tableRelation,
+          column,
+          expression,
+        );
+      } else if (expression is AnyExpression) {
+        subQueries[index] = _buildWhereAnySubQuery(
+          relationQueryAlias,
+          index,
+          tableRelation,
+          column,
+          expression,
+        );
+      } else if (expression is EveryExpression) {
+        subQueries[index] = _buildWhereEverySubQuery(
+          relationQueryAlias,
+          index,
+          tableRelation,
+          column,
+          expression,
+        );
+      } else {
+        subQueries[index] = _buildWhereCountSubQuery(
+          relationQueryAlias,
+          index,
+          tableRelation,
+          column,
+          expression,
+        );
+      }
+    });
+
+    return subQueries;
+  }
+
+  static _FirebirdSubQuery _buildWhereCountSubQuery(
+    String relationQueryAlias,
+    int index,
+    TableRelation tableRelation,
+    ColumnCount column,
+    ColumnExpression<dynamic> expression,
+  ) {
+    final uniqueRelationQueryAlias = buildUniqueQueryAlias(
+      whereCountPrefix,
+      relationQueryAlias,
+      index,
     );
-    if (_where != null) {
-      inner.write(' WHERE ${_renderExpression(_where!)}');
-    }
-    inner.write(' FETCH FIRST ${_limit!} ROWS ONLY');
 
-    return 'SELECT COUNT(*) AS "$alias" '
-        'FROM (${inner.toString()}) "FIREBIRD_COUNT_SOURCE"';
+    final subQuery = FirebirdSelectQueryBuilder(table: tableRelation.fieldTable)
+        .withWhere(column.innerWhere)
+        .withSelectFields([tableRelation.fieldColumn])
+        .enableOneLevelWhereExpressionJoins()
+        .withHaving(expression)
+        .build();
+
+    return _FirebirdSubQuery(subQuery, uniqueRelationQueryAlias);
   }
 
-  String _renderExpression(Expression expression) {
-    var sql = expression.toString();
-    for (final column in expression.columns) {
-      sql = sql.replaceAll(column.toString(), _renderColumn(column));
-    }
-    return sql;
+  static _FirebirdSubQuery _buildWhereNoneSubQuery(
+    String relationQueryAlias,
+    int index,
+    TableRelation tableRelation,
+    ColumnCount column,
+    ColumnExpression<dynamic> expression,
+  ) {
+    final uniqueRelationQueryAlias = buildUniqueQueryAlias(
+      whereNonePrefix,
+      relationQueryAlias,
+      index,
+    );
+
+    final subQuery = FirebirdSelectQueryBuilder(table: tableRelation.fieldTable)
+        .withWhere(column.innerWhere)
+        .withManyRelationWhereAddition(expression)
+        .withSelectFields([tableRelation.fieldColumn])
+        .enableOneLevelWhereExpressionJoins()
+        .forceGroupBy()
+        .build();
+
+    return _FirebirdSubQuery(subQuery, uniqueRelationQueryAlias);
   }
 
-  String _renderColumn(Column column) {
-    return '${_renderAlias(column.table.queryPrefix)}.'
-        '${_renderSchemaIdentifier(column.columnName)}';
+  static _FirebirdSubQuery _buildWhereAnySubQuery(
+    String relationQueryAlias,
+    int index,
+    TableRelation tableRelation,
+    ColumnCount column,
+    ColumnExpression<dynamic> expression,
+  ) {
+    final uniqueRelationQueryAlias = buildUniqueQueryAlias(
+      whereAnyPrefix,
+      relationQueryAlias,
+      index,
+    );
+
+    final subQuery = FirebirdSelectQueryBuilder(table: tableRelation.fieldTable)
+        .withWhere(column.innerWhere)
+        .withManyRelationWhereAddition(expression)
+        .withSelectFields([tableRelation.fieldColumn])
+        .enableOneLevelWhereExpressionJoins()
+        .forceGroupBy()
+        .build();
+
+    return _FirebirdSubQuery(subQuery, uniqueRelationQueryAlias);
   }
 
-  String _renderTableReference(Table table) {
-    return '${_renderSchemaIdentifier(table.tableName)} '
-        'AS ${_renderAlias(table.queryPrefix)}';
+  static _FirebirdSubQuery _buildWhereEverySubQuery(
+    String relationQueryAlias,
+    int index,
+    TableRelation tableRelation,
+    ColumnCount column,
+    ColumnExpression<dynamic> expression,
+  ) {
+    final uniqueRelationQueryAlias = buildUniqueQueryAlias(
+      whereEveryPrefix,
+      relationQueryAlias,
+      index,
+    );
+
+    final subQuery = FirebirdSelectQueryBuilder(table: tableRelation.fieldTable)
+        .withWhere(column.innerWhere)
+        .withManyRelationWhereAddition(expression)
+        .withSelectFields([tableRelation.fieldColumn])
+        .enableOneLevelWhereExpressionJoins()
+        ._wrapWhereInNotStatement()
+        .forceGroupBy()
+        .build();
+
+    return _FirebirdSubQuery(subQuery, uniqueRelationQueryAlias);
   }
 
-  String _renderSchemaIdentifier(String identifier) {
-    return '"${identifier.replaceAll('"', '""').toUpperCase()}"';
+  String buildQueries() => buildQueryClauses().join(', ');
+
+  List<String> buildQueryClauses() {
+    return [
+      ..._formatQueries(_orderByQueries),
+      ..._formatQueries(_whereCountQueries),
+    ];
   }
 
-  String _renderAlias(String identifier) {
-    return '"${identifier.replaceAll('"', '""')}"';
+  List<String> _formatQueries(Map<int, _FirebirdSubQuery> subQueries) {
+    final queries = <String>[];
+    subQueries.forEach((_, subQuery) {
+      queries.add('${_renderAlias(subQuery.alias)} AS (${subQuery.query})');
+    });
+    return queries;
   }
 }
 
@@ -611,4 +1110,24 @@ List<Table> _gatherIncludeObjectTables(Include? include, Table table) {
   });
 
   return tables;
+}
+
+String _normalizeQualifiedColumnReferences(String sql) {
+  final referencePattern = RegExp(r'"([^"]+)"\."([^"]+)"');
+  return sql.replaceAllMapped(referencePattern, (match) {
+    final alias = match.group(1)!;
+    final column = match.group(2)!;
+    return '"$alias"."${column.toUpperCase()}"';
+  });
+}
+
+String _renderAlias(String identifier) {
+  return '"${identifier.replaceAll('"', '""')}"';
+}
+
+StateError _createStateErrorWithMessage(String message) {
+  const stateErrorMessage =
+      'This likely means that the code generator did not '
+      'create the table relations correctly.';
+  return StateError('$message - $stateErrorMessage');
 }

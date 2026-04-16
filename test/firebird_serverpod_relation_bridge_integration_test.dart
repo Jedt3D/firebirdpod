@@ -138,6 +138,7 @@ class _AuthorTable extends Table<int?> {
 
   _CompanyTable? _company;
   _BookTable? _books;
+  ManyRelation<_BookTable>? _booksRelation;
 
   _CompanyTable get company {
     if (_company != null) return _company!;
@@ -163,6 +164,15 @@ class _AuthorTable extends Table<int?> {
           _BookTable(tableRelation: foreignTableRelation),
     );
     return _books!;
+  }
+
+  ManyRelation<_BookTable> get booksRelation {
+    if (_booksRelation != null) return _booksRelation!;
+    _booksRelation = ManyRelation<_BookTable>(
+      tableWithRelations: books,
+      table: _BookTable(tableRelation: books.tableRelation!.lastRelation),
+    );
+    return _booksRelation!;
   }
 
   @override
@@ -459,30 +469,91 @@ void main() {
       expect(rows.map((row) => row.company?.name), ['Contoso', 'Acme']);
     });
 
-    test(
-      'find rejects relation filters without the matching object include',
-      () async {
-        if (!shouldRunDirectIntegrationTests()) {
-          return;
-        }
+    test('find filters by object relation columns through hidden auto-joins', () async {
+      if (!shouldRunDirectIntegrationTests()) {
+        return;
+      }
 
-        final session = _TestDatabaseSession();
+      final session = _TestDatabaseSession();
+      final rows = await connection.find<_AuthorRow>(
+        session,
+        where: authors.company.name.equals('Acme'),
+      );
 
-        await expectLater(
-          () => connection.find<_AuthorRow>(
-            session,
-            where: authors.company.name.equals('Acme'),
-          ),
-          throwsA(
-            isA<UnsupportedError>().having(
-              (error) => error.message,
-              'message',
-              contains('joined object relations'),
-            ),
-          ),
-        );
-      },
-    );
+      expect(rows, hasLength(1));
+      expect(rows.single.name, 'Alice');
+      expect(rows.single.company, isNull);
+    });
+
+    test('find orders by object relation columns through hidden auto-joins', () async {
+      if (!shouldRunDirectIntegrationTests()) {
+        return;
+      }
+
+      final session = _TestDatabaseSession();
+      final rows = await connection.find<_AuthorRow>(
+        session,
+        where: authors.companyId.notEquals(null),
+        orderBy: authors.company.name.desc(),
+      );
+
+      expect(rows.map((row) => row.name), ['Cara', 'Alice']);
+      expect(rows.every((row) => row.company == null), isTrue);
+    });
+
+    test('find filters by list relation count and any semantics', () async {
+      if (!shouldRunDirectIntegrationTests()) {
+        return;
+      }
+
+      final session = _TestDatabaseSession();
+
+      final countedRows = await connection.find<_AuthorRow>(
+        session,
+        where: authors.booksRelation.count() > 1,
+        orderBy: authors.id,
+      );
+      final anyRows = await connection.find<_AuthorRow>(
+        session,
+        where: authors.booksRelation.any(
+          (books) => books.title.like('%Firebird%'),
+        ),
+        orderBy: authors.id,
+      );
+
+      expect(countedRows.map((row) => row.name), ['Alice']);
+      expect(anyRows.map((row) => row.name), ['Alice']);
+    });
+
+    test('count supports list relation filters', () async {
+      if (!shouldRunDirectIntegrationTests()) {
+        return;
+      }
+
+      final session = _TestDatabaseSession();
+      final rowCount = await connection.count<_AuthorRow>(
+        session,
+        where: authors.booksRelation.any(
+          (books) => books.title.like('%Firebird%'),
+        ),
+      );
+
+      expect(rowCount, 1);
+    });
+
+    test('find orders by list relation count', () async {
+      if (!shouldRunDirectIntegrationTests()) {
+        return;
+      }
+
+      final session = _TestDatabaseSession();
+      final rows = await connection.find<_AuthorRow>(
+        session,
+        orderBy: authors.booksRelation.count().desc(),
+      );
+
+      expect(rows.map((row) => row.name), ['Alice', 'Bob', 'Cara']);
+    });
 
     test('find paginates IncludeList per parent with limit', () async {
       if (!shouldRunDirectIntegrationTests()) {
