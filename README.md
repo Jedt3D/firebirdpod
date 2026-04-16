@@ -45,6 +45,11 @@ Primary implementation repository for the Firebird-native Serverpod backend.
 - attachment cancellation entry points
 - scalar, date, blob, and richer Firebird 5 type decoding
 - dedicated retained and explicit write-contract coverage for insert, update, delete, multi-row `RETURNING`, Firebird-native upsert, and constraint failures
+- Phase 02 Slice 02A Serverpod registration scaffolding for:
+  - Firebird Serverpod config parsing
+  - Firebird dialect registration
+  - Firebird provider and pool-manager creation
+  - placeholder Serverpod connection, analyzer, and migration interfaces
 - Live prototype transport using the local `fbdb` package that proves:
   - real `fbclient` attachment
   - prepared statement execution through the seam
