@@ -1,401 +1,136 @@
 # firebirdpod
 
-Primary implementation repository for the Firebird-native Serverpod backend.
+`firebirdpod` is the implementation repository for a Firebird-native Serverpod
+backend. This is where the runtime adapter, Serverpod integration, schema
+tooling, module support, admin operations, and the real test evidence all land.
 
-## Current Repository Focus
+## Status At A Glance
 
-- Firebird connectivity and runtime integration for Serverpod
-- Firebird-native schema and migration support
-- Fixture and native-schema work for repeatable testing
+- Phase 01 is complete: Firebird adapter, direct `fbclient` transport,
+  transaction policy, timeout handling, and lifecycle coverage are in place.
+- Phase 02 is complete through Slice `02E`: Firebird-backed Serverpod runtime
+  registration, raw execution, generated reads and writes, relation loading,
+  and a minimal real `Serverpod` proof all work.
+- Phase 03 is complete through Slice `03D`: Firebird-native schema generation,
+  migration execution and locking, schema drift analysis, and sample-database
+  validation are in place.
+- Phase 04 is complete through Slice `04F`: `serverpod_auth_core`,
+  `serverpod_auth_idp`, and Firebird service-manager admin operations are all
+  proven live.
+- The next major frontier is Phase 05: performance and observability, plus a
+  small set of follow-up compatibility items tracked in [TODO.md](TODO.md).
 
-## Current Phase Status
+## What Already Works
 
-- Phase 01 is complete:
-  - core Firebird adapter, direct `fbclient` transport, transaction policy, and
-    lifecycle stress coverage
-- Phase 02 is complete through Slice 02E:
-  - Serverpod runtime dialect registration
-  - raw and generated read/write execution
-  - relation loading, relation-aware filtering and sorting, and the minimal
-    Firebird-backed Serverpod app proof
-- Phase 03 is complete through Slice 03D:
-  - Firebird-native schema generation
-  - migration execution and locking
-  - schema drift analysis
-  - converted and curated sample-database validation
-- Phase 04 is complete through Slice 04F:
-  - `serverpod_auth_core` live Firebird module proof
-  - full `serverpod_auth_idp` live Firebird schema, integrity, and indexed-key
-    persistence proof
-  - non-destructive Firebird service-manager admin proof for server version,
-    validation, and statistics
-  - controlled Firebird service-manager backup and restore proof against the
-    shared sample fixture
-  - controlled Firebird service-manager sweep and shutdown or online proof
-    against a restored temporary fixture
-- Later compatibility refinements and remaining module or operational follow-up
-  work are the next major frontier
+### Firebird Runtime
 
-## Current Implementation Slices
+- Firebird query compilation from named or positional application parameters
+  into Firebird-ready `?` bindings.
+- Prepared SQL templates that parse once, bind many times, and reject mixed
+  placeholder styles.
+- An owned direct `fbclient` transport for attachments, statements,
+  transactions, savepoints, generated IDs, timeout control, and retained-state
+  reset for pooled reuse.
+- Structured Firebird exception mapping and scalar, date, blob, and newer
+  Firebird 5 value decoding.
+- A small `fbdb` prototype path that still proves the seam shape separately.
 
-- Dart package bootstrap for new backend-facing code in:
-  - `lib/`
-  - `test/`
-- Firebird query compilation primitives that:
-  - accept named or positional application parameters
-  - rewrite them into Firebird-ready `?` placeholders
-  - preserve binding order by actual placeholder appearance
-  - protect quoted strings, quoted identifiers, and SQL comments
-- Prepared SQL templates that:
-  - parse once and bind many times
-  - reject mixed named and positional placeholder styles
-  - fail fast on parameter-style mismatch
-- Runtime seam primitives that model:
-  - endpoint attach
-  - connection lifecycle
-  - explicit transaction lifecycle
-  - prepared statement lifecycle
-  - native-client delegation behind a small interface
-  - pool-safe connection reset before reuse
-- First owned low-level direct `fbclient` transport that proves:
-  - DPB-based attachment
-  - default transaction lifecycle
-  - explicit transaction begin, commit, rollback, and close
-  - explicit transaction savepoints
-  - explicit transaction isolation-level mapping
-  - transaction-scoped runtime parameters through Firebird context variables
-  - retained-transaction recreation for pooled reuse
-  - prepared statement execution without the high-level `FbDb` transport
-- generated-id extraction from `INSERT ... RETURNING`
-- structured Firebird exception mapping
-- connection-level and statement-level timeout control
-- connection-level timeout round-trip validated in milliseconds on the direct adapter
-- attachment cancellation entry points
-- scalar, date, blob, and richer Firebird 5 type decoding
-- dedicated retained and explicit write-contract coverage for insert, update, delete, multi-row `RETURNING`, Firebird-native upsert, and constraint failures
-- Phase 02 Slice 02A Serverpod registration scaffolding for:
-  - Firebird Serverpod config parsing
-  - Firebird dialect registration
-  - Firebird provider and pool-manager creation
-  - Firebird Serverpod connection, analyzer, and migration integration entry points
-- Phase 02 Slice 02B raw Serverpod execution for:
-  - `query(...)` and `execute(...)`
-  - `simpleQuery(...)` and `simpleExecute(...)` through a Firebird-aware
-    simple-SQL batch splitter with `EXECUTE BLOCK` support
-  - explicit Serverpod transaction bridging
-  - Serverpod-facing database-result wrapping
-  - Firebird transaction savepoints and runtime parameters through the Serverpod wrapper
-- Phase 02 Slice 02C generated Serverpod reads for:
-  - `find(...)`
-  - `findFirstRow(...)`
-  - `findById(...)`
-  - `count(...)`
-  - Firebird-native identifier rendering
-  - Firebird-native `OFFSET ... FETCH ...` pagination
-  - single-table generated read locking through `FOR UPDATE WITH LOCK`
-  - model row materialization through the Serverpod serialization manager
-- Phase 02 Slice 02D generated Serverpod writes for:
-  - `insert(...)` and `insertRow(...)`
-  - `update(...)`, `updateRow(...)`, `updateById(...)`, and `updateWhere(...)`
-  - `delete(...)`, `deleteRow(...)`, and `deleteWhere(...)`
-  - Firebird-native write materialization through `RETURNING *`
-  - ordered or limited write selection through a select-then-mutate path
-  - explicit multi-row atomicity through transactions or savepoints
-  - `lockRows(...)` for `LockMode.forUpdate` inside explicit transactions
-  - explicit rejection of `ignoreConflicts: true` until a Firebird-native
-    policy is designed
-- Phase 02 Slice 02E relation-loading baseline for:
-  - object includes through Firebird-native left joins
-  - hidden auto-joins for object-relation `where` and `orderBy`
-  - many-relation filtering through Firebird-owned `count`, `any`, `none`,
-    and `every` subqueries
-  - many-relation ordering through relation-count subqueries
-  - list includes through follow-up Firebird queries
-  - nested list resolution over included object graphs
-  - per-parent `IncludeList.limit` and `IncludeList.offset` through a
-    Firebird-native windowed list query
-  - explicit lock-policy rejection for PostgreSQL-only lock modes
-  - a minimal Firebird-backed Serverpod app proof against `employee.fdb`
-    through a real `Serverpod` object, `Session`, hand-wired endpoint
-    dispatch, and a proof-only `pod.start()` bootstrap on the sample database
-- Phase 03 Slice 03A schema-generation baseline for:
-  - Firebird-native schema-definition SQL from `DatabaseDefinition`
-  - Firebird-native migration SQL from `DatabaseMigration`
-  - identity-column, default-value, foreign-key, and index rendering owned in
-    `firebirdpod`
-  - guarded `createTableIfNotExists` via Firebird `EXECUTE BLOCK`
-  - deterministic unit coverage for supported SQL generation
-  - explicit rejection of unsupported first-slice features such as non-public
-    schemas, tablespaces, vector types, partial indexes, random UUID defaults,
-    and UUID v7 defaults
-- Phase 03 Slice 03B migration-execution baseline for:
-  - batch-aware `simpleQuery(...)` and `simpleExecute(...)` execution for
-    Firebird migration SQL
-  - explicit Firebird migration windows through
-    `FirebirdServerpodMigrationRunner`
-  - committed bootstrap of the migration lock table and singleton lock row
-  - one-migration-at-a-time serialization through `FOR UPDATE WITH LOCK`
-  - live rollback proof for DDL inside the migration transaction
-  - live concurrency proof for the lock window using a second isolate to avoid
-    same-isolate blocking FFI deadlock in the test harness
-- Phase 03 Slice 03C schema-analysis baseline for:
-  - Firebird-owned schema introspection through
-    `FirebirdServerpodDatabaseAnalyzer`
-  - user-table, column, ordinary-index, and foreign-key metadata from Firebird
-    system tables
-  - first supported type and default-value normalization back into
-    Serverpod-facing `DatabaseDefinition` objects
-  - live round-trip integrity proof against generated Firebird schema
-  - directional drift reporting for both missing target elements and
-    unexpected live elements
-- Phase 03 Slice 03D sample-validation baseline for:
-  - reusable validation of converted and curated Firebird sample databases
-  - a runnable sample-database inventory and gap-report tool
-  - zero-gap gating for the curated native fixture set
-  - compatibility validation for the raw converted sample set
-  - feedback fixes for `DATE`, `TIME`, scaled exact numerics, and
-    `DEFAULT NULL` handling in the analyzer path
-- Phase 04 Slice 04A `serverpod_auth_core` module baseline for:
-  - Firebird-native schema and integrity proof against the generated
-    `serverpod_auth_core` tables
-  - generated UUID write compatibility without Firebird-side UUID defaults
-  - end-to-end persistence proof for auth-user and refresh-token rows with
-    relation materialization
-- Phase 04 Slice 04B minimal `serverpod_auth_idp` module baseline for:
-  - a reusable module cleanup harness for shared-schema live tests
-  - first Firebird-compatible indexed-text schema rendering through bounded
-    indexed storage on Serverpod `text` columns
-  - live persistence proof for anonymous-account, email-account,
-    email-account-request, secret-challenge, and passkey-challenge tables
-  - an explicit follow-up boundary where broader `serverpod_auth_idp`
-    tables with wider indexed text keys still need a Firebird-native policy
-- Phase 04 Slice 04C full `serverpod_auth_idp` module baseline for:
-  - a compatibility-managed full-module schema and integrity proof against the
-    generated `serverpod_auth_idp` and `serverpod_auth_core` tables
-  - a Firebird-native indexed-text policy that keeps indexed auth identifiers
-    on bounded ASCII-backed `VARCHAR` storage and applies tighter composite-key
-    budgets for rate-limit selectors
-  - live persistence proof for Apple, Facebook, Firebase, GitHub, Google, and
-    Microsoft provider identifiers, passkey-account lookup keys, and
-    rate-limited-request attempts
-  - a currently explicit Firebird compatibility boundary where indexed auth
-    email and rate-limit nonce storage is ASCII-backed to fit the shared
-    test-database key budget
-- Phase 04 Slice 04D Firebird service-manager admin baseline for:
-  - a Firebird-owned service-manager seam built directly on the low-level
-    `fbclient` OO API
-  - non-destructive server-version, validation, and statistics operations
-    outside the normal SQL attachment path
-  - a conservative header-statistics default policy because Firebird header
-    stats are incompatible with the broader page-stat switches in one request
-  - live smoke coverage against the shared `employee.fdb` fixture
-- Phase 04 Slice 04E Firebird backup and restore baseline for:
-  - Firebird-owned backup and restore operations on the same service-manager
-    seam, without shell-only `gbak` workflows
-  - explicit backup and restore option types for the first supported service
-    flags and restore creation policy
-  - a live round-trip proof that backs up `employee.fdb`, restores it into a
-    temporary database, and reads the restored copy through the normal direct
-    Firebird endpoint
-- Phase 04 Slice 04F Firebird sweep and online-control baseline for:
-  - Firebird-owned sweep, shutdown, and online operations on the same
-    service-manager seam
-  - explicit shutdown mode, shutdown method, timeout, and online mode types
-    instead of raw service-manager integers
-  - a live proof that sweeps a restored temporary database, forces it fully
-    offline, verifies ordinary attachments are rejected, and brings it back
-    online for normal direct reads
-- Live prototype transport using the local `fbdb` package that proves:
-  - real `fbclient` attachment
-  - prepared statement execution through the seam
-  - cursor and non-cursor example paths
-- Curated native fixture tooling and verification in:
-  - `tools/`
-  - `tests/`
+### Serverpod Integration
 
-## Why The Query Compiler Lands First
+- Firebird Serverpod config parsing, dialect registration, provider creation,
+  pool-manager wiring, and transaction bridging.
+- Raw execution through `query(...)`, `execute(...)`, `simpleQuery(...)`, and
+  `simpleExecute(...)`.
+- Generated read support for `find(...)`, `findFirstRow(...)`, `findById(...)`,
+  `count(...)`, pagination, and `FOR UPDATE WITH LOCK`.
+- Generated write support for insert, update, delete, ordered selection before
+  mutation, multi-row atomicity, and `lockRows(...)`.
+- Relation loading with object includes, list includes, relation-aware filters,
+  relation-aware sorting, and per-parent list pagination.
+- A minimal Firebird-backed Serverpod app proof against `employee.fdb`.
 
-Firebird prepared statements bind positional `?` placeholders. Serverpod-style
-application SQL often starts from named parameters like `@tenantId` or indexed
-parameters like `$1`. The compiler slice gives us one deterministic place to
-normalize those inputs before we add actual `fbclient` statement execution.
+### Schema And Migration Tooling
 
-The runtime slice now builds directly on top of that compiler contract, so the
-future `fbclient` implementation only needs to provide:
+- Firebird-native schema-definition SQL generation from `DatabaseDefinition`.
+- Firebird-native migration SQL generation from `DatabaseMigration`.
+- Firebird migration execution with batch-aware simple SQL support, a committed
+  lock-table bootstrap, and one-migration-at-a-time locking.
+- Firebird-owned schema introspection and drift reporting through
+  `FirebirdServerpodDatabaseAnalyzer`.
+- Converted and curated sample-database validation, including zero-gap gating
+  for the curated native fixtures.
 
-- attach
-- begin transaction
-- prepare statement
-- execute bound values
-- commit or rollback when needed
-- close statement and connection
+### Modules And Admin
 
-The current `fbdb` prototype proved the seam shape first. The repository now
-also contains an owned direct `fbclient` slice that executes through the
-Firebird OO API inside `firebirdpod` itself. We still reuse the low-level Dart
-wrapper types from the local `firedart` repository, but the statement lifecycle,
-parameter encoding, and row decoding logic are now owned here.
+- Live Firebird module proof for `serverpod_auth_core`.
+- Live Firebird module proof for `serverpod_auth_idp`, including the current
+  indexed-text compatibility policy for auth-style lookup keys.
+- Firebird service-manager support for server version, validation, statistics,
+  backup, restore, sweep, shutdown, and online operations.
+- Safe live admin coverage that uses restored temporary databases for
+  destructive service-manager proofs instead of taking the shared source
+  fixture offline.
 
-The current direct slice already covers:
+## Current Boundaries
 
-- text and binary blobs
-- exact numeric generated IDs through `RETURNING`
-- `INT128` and scaled 128-bit numerics
-- `DECFLOAT(16)` and `DECFLOAT(34)`
-- `TIME WITH TIME ZONE`
-- `TIMESTAMP WITH TIME ZONE`
-- structured timeout-aware error reporting
-- a dedicated write-contract integration suite for ordinary DML behavior
-- Firebird-native upsert and multi-row `RETURNING` validation
-- a monitoring-backed stress suite for repeated serial lifecycle validation
-- repeated pooled-reset stress validation on one worker attachment
-- an explicit-transaction capability suite for savepoints, isolation, and runtime parameters
-- a pooled-reset suite for retained-state cleanup before reuse
+- Pool-level Serverpod `runtimeParametersBuilder` is still intentionally
+  unsupported on the Firebird path.
+- `ignoreConflicts: true` is still rejected until there is a Firebird-native
+  policy for it.
+- Auth indexed email and rate-limit nonce storage still use an ASCII-backed
+  indexed policy to stay inside the shared test database key budget.
+- `cancelCurrentOperation()` exists as a low-level seam, but true user-facing
+  async cancellation is still a later control-plane feature.
 
-## Timeout And Cancellation Policy
-
-- Statement timeout is the production control baseline for the current direct
-  adapter.
-- `cancelCurrentOperation()` remains available as a low-level seam, but it is
-  not the current guarantee for user-driven mid-flight cancellation.
-- True async cancel for the direct adapter will require a later control-plane
-  feature, not just another `Future`-returning Dart method.
-
-## Transaction Use Policy
-
-- The retained Firebird transaction is an internal auto-transaction path for
-  standalone operations.
-- The explicit transaction path is the future basis for the Serverpod
-  `Transaction` contract.
-- Anything that needs savepoints, row locks, custom isolation, runtime
-  parameters, or multi-step atomic work must use the explicit path.
-- Retained transaction state must not be allowed to become request-scoped
-  application state when pooled connections are reused.
-- `resetForReuse()` is the adapter primitive that future pooled integration
-  should call before an attachment becomes idle for the next request.
-- Pool-level Serverpod `runtimeParametersBuilder` is still intentionally unsupported
-  on the Firebird path until we design a Firebird-native equivalent.
-
-## Current Direct-Test Policy
+## Test Commands
 
 - Fast default verification:
   - `dart test`
 - Full live direct verification:
   - `FIREBIRDPOD_RUN_FBCLIENT_DIRECT=1 dart test -j 1`
+- `fbdb` prototype verification:
+  - `FIREBIRDPOD_RUN_FBDB_PROTOTYPE=1 dart test test/firebird_fbdb_prototype_integration_test.dart`
 
-The live direct suite currently runs most reliably with `-j 1`, because the
-integration files still share one Firebird database and some of them perform
-DDL during setup or teardown.
+The live suite still runs most reliably with `-j 1`. Most live tests share one
+Firebird database, and some of them still perform setup or teardown DDL.
 
-The current evidence from the stress slice says serial live execution is clean;
-isolated databases per file remain an optional future harness upgrade if we
-decide we need safe parallel live execution.
+Destructive admin flows do not operate directly on the shared source fixture.
+Backup, restore, sweep, shutdown, and online proofs use a temporary restored
+copy instead.
 
-The explicit-transaction capability tests also follow this serial shared-schema
-pattern on this machine because fresh throwaway database creation is currently
-rejected by the local Firebird environment.
+## Repository Guide
 
-The pooled-reset integration test follows the same policy and uses dedicated
-tables inside the shared Firebird test database.
+- `lib/`
+  - production Firebird runtime, Serverpod integration, schema tooling, and
+    admin code
+- `test/`
+  - unit and integration coverage, including live service-manager proofs
+- `tools/`
+  - fixture and support tooling
+- `fixtures/native/`
+  - curated native fixture blueprints and notes
+- [TODO.md](TODO.md)
+  - follow-up work that we intentionally did not force into the current phase
 
-The generated read-path suite follows the same serial live-suite policy and
-currently proves:
+## Useful Entry Points
 
-- single-table generated reads, pagination, and `findById(...)`
-- Firebird-native `count(...)`
-- explicit `FOR UPDATE WITH LOCK` support for generated reads
+- Runnable proof example:
+  - `/Users/worajedt/GitHub/FireDart/firebirdpod/example/serverpod_employee_proof.dart`
+- Sample-database validation report tool:
+  - `/Users/worajedt/GitHub/FireDart/firebirdpod/tool/firebird_serverpod_sample_database_report.dart`
+- Main project docs workspace:
+  - `/Users/worajedt/GitHub/FireDart/docs/serverpod-firebird`
+- Phase roadmap:
+  - `/Users/worajedt/GitHub/FireDart/docs/serverpod-firebird/planning/phase-roadmap.md`
 
-The relation-loading suite extends that baseline and currently proves:
-
-- object includes and list includes
-- hidden auto-join object-relation filtering and sorting
-- many-relation filter and sort semantics
-- per-parent `IncludeList.limit` and `IncludeList.offset`
-
-The generated write-path suite follows the same serial live-suite policy and
-currently stays within single-table CRUD plus `lockRows(...)` for
-`LockMode.forUpdate`. Includes, relation-aware mutations, and a Firebird-native
-`ignoreConflicts` strategy remain later slices.
-
-The minimal app proof follows the same live-suite policy and currently proves:
-
-- Firebird dialect registration inside a real `Serverpod` object
-- `Session` creation before calling `pod.start()`
-- endpoint dispatch into Firebird-backed `session.db.unsafeQuery(...)`
-- transactional read work against the native `employee.fdb` sample database
-- clean `pod.start()` after proof-only bootstrap of
-  `serverpod_runtime_settings` and `serverpod_migrations`
-
-The migration-runner suite follows the same live-suite policy and currently
-proves:
-
-- rollback of migration-window DDL on failure
-- serialized migration windows on one shared Firebird database
-- batch execution for ordinary `;`-separated SQL and `EXECUTE BLOCK`
-- a Firebird-native migration policy where metadata bootstrap is committed
-  before the lock window starts
-
-The analyzer suite follows the same live-suite policy and currently proves:
-
-- generated Firebird schema can be introspected back into supported
-  `DatabaseDefinition` metadata
-- `verifyDatabaseIntegrity(...)` passes for the supported round-trip schema
-- `verifyDatabaseIntegrity(...)` fails for a supported drift mismatch and
-  reports a usable warning
-
-The sample-database validation suite follows the same live-suite policy and
-currently proves:
-
-- all four converted sample databases stay within the current compatibility
-  budget
-- all four curated native databases stay at zero-gap baseline
-- analyzed sample schemas remain generator-compatible under the current
-  Firebird schema baseline
-
-The service-manager admin suite follows the same live-suite policy and
-currently proves:
-
-- Firebird server-version query through the service manager
-- non-destructive database statistics against the shared fixture
-- non-destructive database validation against the shared fixture
-- Firebird backup of the shared fixture into a temporary backup artifact
-- Firebird restore of that backup into a temporary database followed by a real
-  direct-attachment read proof
-- Firebird sweep of a restored temporary database
-- Firebird shutdown rejection of ordinary attachments plus online recovery on a
-  restored temporary database
-
-The runnable proof example lives at:
-
-- `/Users/worajedt/GitHub/FireDart/firebirdpod/example/serverpod_employee_proof.dart`
-
-The runnable sample-validation report lives at:
-
-- `/Users/worajedt/GitHub/FireDart/firebirdpod/tool/firebird_serverpod_sample_database_report.dart`
-
-## TODO
-
-Deferred follow-ups and revisit windows are tracked in:
-
-- `/Users/worajedt/GitHub/FireDart/firebirdpod/TODO.md`
-
-## Fixture Work
+## Fixtures And References
 
 - Raw Firebird fixtures live outside this repository under:
   - `/Users/worajedt/GitHub/FireDart/databases/firebird`
-- Native refactoring blueprints and curated fixture design live here under:
-  - `fixtures/native/`
-- The executable curated-fixture builder lives at:
-  - `tools/build_native_fixtures.py`
-- The executable curated-fixture verifier lives at:
-  - `tools/verify_native_fixtures.py`
-- The repo-level contract tests live at:
-  - `tests/test_native_fixture_contract.py`
+- Reference repositories:
+  - `/Users/worajedt/GitHub/FireDart/firedart`
+  - `/Users/worajedt/GitHub/FireDart/postgresql-dart`
+  - `/Users/worajedt/GitHub/FireDart/serverpod`
 
-## Reference Repositories
-
-- `/Users/worajedt/GitHub/FireDart/firedart`
-- `/Users/worajedt/GitHub/FireDart/postgresql-dart`
-- `/Users/worajedt/GitHub/FireDart/serverpod`
-
-These are study references only. New implementation work belongs in this repository.
+These reference repositories are for study only. New implementation work
+belongs in `firebirdpod`.
