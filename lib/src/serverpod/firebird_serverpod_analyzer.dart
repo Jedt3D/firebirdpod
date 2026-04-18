@@ -327,7 +327,8 @@ order by rc.rdb\$constraint_name, seg.rdb\$field_position
     if (upper == 'FALSE') {
       return defaultBooleanFalse;
     }
-    if (upper == 'UUID_TO_CHAR(GEN_UUID())') {
+    if (upper == 'UUID_TO_CHAR(GEN_UUID())' ||
+        upper == '(UUID_TO_CHAR(GEN_UUID()))') {
       return defaultUuidValueRandom;
     }
 

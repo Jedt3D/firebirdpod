@@ -86,10 +86,7 @@ class _FirebirdFbdbPrototypeConnection implements FirebirdNativeConnection {
     _ensureOpen();
     try {
       final transaction = await _db.newTransaction(
-        flags: _mapTransactionFlags(
-          readOnly: readOnly,
-          settings: settings,
-        ),
+        flags: _mapTransactionFlags(readOnly: readOnly, settings: settings),
       );
       return _FirebirdFbdbPrototypeTransaction(_db, transaction);
     } on fbdb.FbServerException catch (error) {
@@ -235,10 +232,7 @@ class _FirebirdFbdbPrototypeTransaction implements FirebirdNativeTransaction {
     _ensureOpen();
     final normalizedId = _requireSqlIdentifier(id, context: 'savepoint id');
     await _executeControlStatement('SAVEPOINT $normalizedId');
-    return _FirebirdFbdbPrototypeSavepoint(
-      transaction: this,
-      id: normalizedId,
-    );
+    return _FirebirdFbdbPrototypeSavepoint(transaction: this, id: normalizedId);
   }
 
   @override
@@ -355,7 +349,7 @@ Set<fbdb.FbTrFlag> _mapTransactionFlags({
     case FirebirdTransactionIsolationLevel.readCommitted:
       flags.addAll(<fbdb.FbTrFlag>{
         fbdb.FbTrFlag.readCommitted,
-        fbdb.FbTrFlag.noRecVersion,
+        fbdb.FbTrFlag.readConsistency,
       });
       break;
     case FirebirdTransactionIsolationLevel.repeatableRead:

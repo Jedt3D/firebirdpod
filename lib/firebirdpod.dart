@@ -1,3 +1,4 @@
+export 'src/admin/firebird_service_manager.dart';
 export 'src/runtime/fbclient/firebird_fbclient_native_client.dart';
 export 'src/runtime/fbdb/firebird_fbdb_prototype_client.dart';
 export 'src/runtime/firebird_cancel_mode.dart';

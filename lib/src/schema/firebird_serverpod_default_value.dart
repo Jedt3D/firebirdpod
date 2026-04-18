@@ -42,14 +42,7 @@ extension FirebirdColumnTypeDefault on ColumnType {
         }
 
         return switch (defaultValue) {
-          defaultUuidValueRandom => throw UnsupportedError(
-            'Firebird schema generation does not support random UUID '
-            'defaults yet.',
-          ),
-          defaultUuidValueRandomV7 => throw UnsupportedError(
-            'Firebird schema generation does not support random_v7 UUID '
-            'defaults yet.',
-          ),
+          defaultUuidValueRandom || defaultUuidValueRandomV7 => null,
           _ => defaultValue,
         };
       case ColumnType.bytea:

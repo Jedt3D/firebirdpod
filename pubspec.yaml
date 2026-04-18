@@ -22,13 +22,19 @@ dependencies:
     path: ../serverpod/packages/serverpod_shared
 
 dev_dependencies:
-  lints: ^5.1.1
+  lints: ^6.1.0
+  serverpod_auth_core_server:
+    path: ../serverpod/modules/serverpod_auth/serverpod_auth_core/serverpod_auth_core_server
+  serverpod_auth_idp_server:
+    path: ../serverpod/modules/serverpod_auth/serverpod_auth_idp/serverpod_auth_idp_server
   test: ^1.25.8
   yaml: ^3.1.3
 
 dependency_overrides:
   serverpod:
     path: ../serverpod/packages/serverpod
+  serverpod_auth_core_server:
+    path: ../serverpod/modules/serverpod_auth/serverpod_auth_core/serverpod_auth_core_server
   serverpod_database:
     path: ../serverpod/packages/serverpod_database
   serverpod_serialization:

@@ -5,15 +5,18 @@ import '../runtime/firebird_connection.dart';
 import '../runtime/firebird_connection_options.dart';
 import '../runtime/firebird_endpoint.dart';
 import 'firebird_serverpod_config.dart';
+import 'firebird_serverpod_definition_compatibility.dart';
 import 'firebird_serverpod_value_encoder.dart';
 
 /// First Firebird-backed Serverpod pool-manager scaffold.
 class FirebirdServerpodPoolManager implements DatabasePoolManager {
   FirebirdServerpodPoolManager(
-    this.serializationManager,
+    SerializationManagerServer serializationManager,
     this.runtimeParametersBuilder,
     this.config,
-  );
+  ) : serializationManager = FirebirdCompatibilitySerializationManager(
+        serializationManager,
+      );
 
   @override
   DatabaseDialect get dialect => DatabaseDialect.firebird;

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:serverpod_database/serverpod_database.dart';
+import 'package:serverpod_serialization/serverpod_serialization.dart';
 
 /// Conservative Firebird SQL literal encoder for the first Serverpod dialect
 /// slices. Complex values should move to prepared parameters instead of relying
@@ -31,6 +32,7 @@ class FirebirdServerpodValueEncoder implements ValueEncoder {
     }
     if (input is DateTime) return "'${input.toIso8601String()}'";
     if (input is Duration) return input.inMicroseconds.toString();
+    if (input is UuidValue) return "'${input.uuid}'";
     if (input is Uri) return "'${_escapeString(input.toString())}'";
     if (input is String) {
       if (!escapeStrings) return input;
@@ -45,7 +47,7 @@ class FirebirdServerpodValueEncoder implements ValueEncoder {
       return "'${base64Encode(bytes)}'";
     }
 
-    return "'${_escapeString(jsonEncode(input))}'";
+    return "'${_escapeString(SerializationManager.encode(input))}'";
   }
 
   @override

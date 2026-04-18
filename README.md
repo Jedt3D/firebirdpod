@@ -23,7 +23,18 @@ Primary implementation repository for the Firebird-native Serverpod backend.
   - migration execution and locking
   - schema drift analysis
   - converted and curated sample-database validation
-- Phase 04 module support and admin work is the next major frontier
+- Phase 04 is complete through Slice 04F:
+  - `serverpod_auth_core` live Firebird module proof
+  - full `serverpod_auth_idp` live Firebird schema, integrity, and indexed-key
+    persistence proof
+  - non-destructive Firebird service-manager admin proof for server version,
+    validation, and statistics
+  - controlled Firebird service-manager backup and restore proof against the
+    shared sample fixture
+  - controlled Firebird service-manager sweep and shutdown or online proof
+    against a restored temporary fixture
+- Later compatibility refinements and remaining module or operational follow-up
+  work are the next major frontier
 
 ## Current Implementation Slices
 
@@ -144,6 +155,56 @@ Primary implementation repository for the Firebird-native Serverpod backend.
   - compatibility validation for the raw converted sample set
   - feedback fixes for `DATE`, `TIME`, scaled exact numerics, and
     `DEFAULT NULL` handling in the analyzer path
+- Phase 04 Slice 04A `serverpod_auth_core` module baseline for:
+  - Firebird-native schema and integrity proof against the generated
+    `serverpod_auth_core` tables
+  - generated UUID write compatibility without Firebird-side UUID defaults
+  - end-to-end persistence proof for auth-user and refresh-token rows with
+    relation materialization
+- Phase 04 Slice 04B minimal `serverpod_auth_idp` module baseline for:
+  - a reusable module cleanup harness for shared-schema live tests
+  - first Firebird-compatible indexed-text schema rendering through bounded
+    indexed storage on Serverpod `text` columns
+  - live persistence proof for anonymous-account, email-account,
+    email-account-request, secret-challenge, and passkey-challenge tables
+  - an explicit follow-up boundary where broader `serverpod_auth_idp`
+    tables with wider indexed text keys still need a Firebird-native policy
+- Phase 04 Slice 04C full `serverpod_auth_idp` module baseline for:
+  - a compatibility-managed full-module schema and integrity proof against the
+    generated `serverpod_auth_idp` and `serverpod_auth_core` tables
+  - a Firebird-native indexed-text policy that keeps indexed auth identifiers
+    on bounded ASCII-backed `VARCHAR` storage and applies tighter composite-key
+    budgets for rate-limit selectors
+  - live persistence proof for Apple, Facebook, Firebase, GitHub, Google, and
+    Microsoft provider identifiers, passkey-account lookup keys, and
+    rate-limited-request attempts
+  - a currently explicit Firebird compatibility boundary where indexed auth
+    email and rate-limit nonce storage is ASCII-backed to fit the shared
+    test-database key budget
+- Phase 04 Slice 04D Firebird service-manager admin baseline for:
+  - a Firebird-owned service-manager seam built directly on the low-level
+    `fbclient` OO API
+  - non-destructive server-version, validation, and statistics operations
+    outside the normal SQL attachment path
+  - a conservative header-statistics default policy because Firebird header
+    stats are incompatible with the broader page-stat switches in one request
+  - live smoke coverage against the shared `employee.fdb` fixture
+- Phase 04 Slice 04E Firebird backup and restore baseline for:
+  - Firebird-owned backup and restore operations on the same service-manager
+    seam, without shell-only `gbak` workflows
+  - explicit backup and restore option types for the first supported service
+    flags and restore creation policy
+  - a live round-trip proof that backs up `employee.fdb`, restores it into a
+    temporary database, and reads the restored copy through the normal direct
+    Firebird endpoint
+- Phase 04 Slice 04F Firebird sweep and online-control baseline for:
+  - Firebird-owned sweep, shutdown, and online operations on the same
+    service-manager seam
+  - explicit shutdown mode, shutdown method, timeout, and online mode types
+    instead of raw service-manager integers
+  - a live proof that sweeps a restored temporary database, forces it fully
+    offline, verifies ordinary attachments are rejected, and brings it back
+    online for normal direct reads
 - Live prototype transport using the local `fbdb` package that proves:
   - real `fbclient` attachment
   - prepared statement execution through the seam
@@ -290,6 +351,19 @@ currently proves:
 - all four curated native databases stay at zero-gap baseline
 - analyzed sample schemas remain generator-compatible under the current
   Firebird schema baseline
+
+The service-manager admin suite follows the same live-suite policy and
+currently proves:
+
+- Firebird server-version query through the service manager
+- non-destructive database statistics against the shared fixture
+- non-destructive database validation against the shared fixture
+- Firebird backup of the shared fixture into a temporary backup artifact
+- Firebird restore of that backup into a temporary database followed by a real
+  direct-attachment read proof
+- Firebird sweep of a restored temporary database
+- Firebird shutdown rejection of ordinary attachments plus online recovery on a
+  restored temporary database
 
 The runnable proof example lives at:
 

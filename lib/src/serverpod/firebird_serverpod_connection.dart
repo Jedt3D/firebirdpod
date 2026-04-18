@@ -974,11 +974,15 @@ Current type was $T''');
       final omitIdentityId =
           column.columnName == table.id.columnName &&
           rawValue == null &&
+          column is ColumnInt &&
           column.hasDefault;
       if (omitIdentityId) continue;
 
       columns.add(_renderIdentifier(column.columnName));
-      if (rawValue == null && column.hasDefault) {
+      if (rawValue == null && column is ColumnUuid && column.hasDefault) {
+        parameters.add(const Uuid().v4obj().uuid);
+        values.add('\$${parameters.length}');
+      } else if (rawValue == null && column.hasDefault) {
         values.add('DEFAULT');
       } else {
         parameters.add(_normalizeMutationValue(column, rawValue));
@@ -1557,6 +1561,12 @@ Current type was $T''');
 
   Object? _normalizeMutationValue(Column column, Object? value) {
     if (value == null) return null;
+    value = switch (column) {
+      ColumnDateTime() => DateTimeJsonExtension.fromJson(value),
+      ColumnByteData() => ByteDataJsonExtension.fromJson(value),
+      ColumnUuid() => UuidValueJsonExtension.fromJson(value),
+      _ => value,
+    };
     if (column is ColumnSerializable) {
       return SerializationManager.encode(value);
     }
@@ -1566,6 +1576,7 @@ Current type was $T''');
         EnumSerialization.byName => value.name,
       };
     }
+    if (value is UuidValue) return value.uuid;
     if (value is Uri) return value.toString();
     if (value is BigInt) return value.toString();
     if (value is Enum) return value.name;
