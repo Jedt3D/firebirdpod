@@ -22,13 +22,7 @@ Future<void> main(List<String> arguments) async {
     ),
   );
 
-  final targets = _availableBenchmarkTargets()
-      .where(
-        (target) =>
-            selectedDatabases == null ||
-            selectedDatabases.contains(target.name),
-      )
-      .toList(growable: false);
+  final targets = firebirdResolveBenchmarkTargets(selectedDatabases);
 
   if (targets.isEmpty) {
     throw ArgumentError(
@@ -71,7 +65,7 @@ Future<void> main(List<String> arguments) async {
   );
 
   for (final target in targets) {
-    final endpoint = _buildEndpoint(target.path);
+    final endpoint = _buildEndpoint(target.databasePath);
     final connection = await endpoint.connect();
     try {
       final scenarios = firebirdDefaultBenchmarkScenariosForDatabase(
@@ -204,29 +198,6 @@ FirebirdEndpoint _buildEndpoint(String databasePath) {
   );
 }
 
-List<_BenchmarkTarget> _availableBenchmarkTargets() {
-  return <_BenchmarkTarget>[
-    _BenchmarkTarget(name: 'employee', path: _employeeDatabasePath()),
-    _BenchmarkTarget(name: 'chinook', path: _chinookDatabasePath()),
-    _BenchmarkTarget(name: 'northwind', path: _northwindDatabasePath()),
-  ];
-}
-
-String _employeeDatabasePath() {
-  return Platform.environment['FIREBIRDPOD_TEST_DATABASE'] ??
-      '/Users/worajedt/GitHub/FireDart/databases/firebird/employee.fdb';
-}
-
-String _chinookDatabasePath() {
-  return Platform.environment['FIREBIRDPOD_CHINOOK_DATABASE'] ??
-      '/Users/worajedt/GitHub/FireDart/databases/firebird/chinook.fdb';
-}
-
-String _northwindDatabasePath() {
-  return Platform.environment['FIREBIRDPOD_NORTHWIND_DATABASE'] ??
-      '/Users/worajedt/GitHub/FireDart/databases/firebird/northwind.fdb';
-}
-
 Set<String>? _parseRequestedDatabases(List<String> arguments) {
   final requested = <String>{};
 
@@ -295,11 +266,4 @@ String _formatMillisecondsOrDash(Duration? duration) {
 String _formatRatio(double? ratio) {
   if (ratio == null) return '-';
   return ratio.toStringAsFixed(3);
-}
-
-class _BenchmarkTarget {
-  const _BenchmarkTarget({required this.name, required this.path});
-
-  final String name;
-  final String path;
 }

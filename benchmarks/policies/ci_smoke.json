@@ -1,0 +1,19 @@
+{
+  "formatVersion": 1,
+  "name": "ci-smoke",
+  "description": "Low-jitter CI smoke gate over the shared employee fixture.",
+  "warmupIterations": 1,
+  "measuredIterations": 3,
+  "targets": [
+    {
+      "name": "employee",
+      "budgetOverride": {
+        "maxMedianRegressionRatio": 1.2,
+        "maxP90RegressionRatio": 1.25,
+        "minMedianRegressionDeltaMicroseconds": 3000,
+        "minP90RegressionDeltaMicroseconds": 5000,
+        "failOnPlanChange": false
+      }
+    }
+  ]
+}

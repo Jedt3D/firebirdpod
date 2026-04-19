@@ -1,0 +1,42 @@
+{
+  "formatVersion": 1,
+  "name": "ci-candidate-multi-database",
+  "description": "Broader CI candidate policy using one calibrated scenario per benchmark database.",
+  "warmupIterations": 1,
+  "measuredIterations": 3,
+  "targets": [
+    {
+      "name": "employee",
+      "scenarioNames": ["employee_directory_join"],
+      "budgetOverride": {
+        "maxMedianRegressionRatio": 1.2,
+        "maxP90RegressionRatio": 1.25,
+        "minMedianRegressionDeltaMicroseconds": 3000,
+        "minP90RegressionDeltaMicroseconds": 5000,
+        "failOnPlanChange": false
+      }
+    },
+    {
+      "name": "chinook",
+      "scenarioNames": ["track_catalog_join"],
+      "budgetOverride": {
+        "maxMedianRegressionRatio": 1.25,
+        "maxP90RegressionRatio": 1.35,
+        "minMedianRegressionDeltaMicroseconds": 5000,
+        "minP90RegressionDeltaMicroseconds": 8000,
+        "failOnPlanChange": false
+      }
+    },
+    {
+      "name": "northwind",
+      "scenarioNames": ["order_rollup"],
+      "budgetOverride": {
+        "maxMedianRegressionRatio": 1.25,
+        "maxP90RegressionRatio": 1.35,
+        "minMedianRegressionDeltaMicroseconds": 8000,
+        "minP90RegressionDeltaMicroseconds": 12000,
+        "failOnPlanChange": false
+      }
+    }
+  ]
+}

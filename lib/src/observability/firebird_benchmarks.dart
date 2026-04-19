@@ -384,6 +384,33 @@ List<FirebirdBenchmarkScenario> firebirdDefaultBenchmarkScenariosForDatabase(
   };
 }
 
+List<FirebirdBenchmarkScenario> firebirdResolveBenchmarkScenariosForDatabase(
+  String database, {
+  Iterable<String>? selectedScenarioNames,
+}) {
+  final scenarios = firebirdDefaultBenchmarkScenariosForDatabase(database);
+  if (selectedScenarioNames == null) return scenarios;
+
+  final requested = selectedScenarioNames
+      .map((name) => name.trim())
+      .where((name) => name.isNotEmpty)
+      .toSet();
+  if (requested.isEmpty) return scenarios;
+
+  final available = scenarios.map((scenario) => scenario.name).toSet();
+  final unknown = requested.where((name) => !available.contains(name)).toList()
+    ..sort();
+  if (unknown.isNotEmpty) {
+    throw ArgumentError(
+      'Unknown benchmark scenarios for $database: ${unknown.join(', ')}.',
+    );
+  }
+
+  return scenarios
+      .where((scenario) => requested.contains(scenario.name))
+      .toList(growable: false);
+}
+
 int _medianMicroseconds(List<int> sortedMicroseconds) {
   final middle = sortedMicroseconds.length ~/ 2;
   if (sortedMicroseconds.length.isOdd) {

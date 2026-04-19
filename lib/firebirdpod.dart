@@ -1,5 +1,9 @@
 export 'src/admin/firebird_service_manager.dart';
+export 'src/observability/firebird_benchmark_catalog.dart';
+export 'src/observability/firebird_benchmark_gate.dart';
+export 'src/observability/firebird_benchmark_gate_policy.dart';
 export 'src/observability/firebird_benchmark_snapshots.dart';
+export 'src/observability/firebird_benchmark_tuning.dart';
 export 'src/observability/firebird_benchmarks.dart';
 export 'src/observability/firebird_cancellation_diagnostics.dart';
 export 'src/observability/firebird_monitoring.dart';

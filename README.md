@@ -17,18 +17,21 @@ tooling, module support, admin operations, and the real test evidence all land.
 - Phase 04 is complete through Slice `04F`: `serverpod_auth_core`,
   `serverpod_auth_idp`, and Firebird service-manager admin operations are all
   proven live.
-- Phase 05 is underway through Slice `05H`: slices `05A` through `05H` are
-  complete. Typed Firebird monitoring helpers, API-backed query-plan
-  inspection, timeout diagnostics, read-consistency validation, cancellation
-  capability diagnostics, benchmark baselines, and a repo-local benchmark
-  snapshot comparison workflow are in place for live attachment, transaction,
+- Phase 05 is underway through Slice `05L`: slices `05A` through `05L` now
+  give us a real observability baseline. Typed Firebird monitoring helpers,
+  API-backed query-plan inspection, timeout diagnostics, read-consistency
+  validation, cancellation capability diagnostics, benchmark baselines, a
+  one-command local benchmark gate, a tuning report, a policy-driven CI smoke
+  gate, a broader calibrated CI candidate policy that selects one scenario per
+  supported benchmark database, and a repo-local benchmark snapshot
+  comparison workflow are in place for live attachment, transaction,
   statement, optimizer-plan, timeout-budget, transaction-visibility,
   cancel-path, and query-class timing diagnostics across the shared
   `employee.fdb` proof fixture plus the converted `chinook` and `northwind`
   samples.
-- The next major Phase 05 frontier is turning that local evidence into a more
-  repeatable regression and tuning workflow, plus a small set of follow-up
-  compatibility items tracked in [TODO.md](TODO.md).
+- The next major Phase 05 frontier is broadening that CI rollout beyond the
+  current repo-owned policies into real hosted release policy, plus a small
+  set of follow-up compatibility items tracked in [TODO.md](TODO.md).
 
 ## What Already Works
 
@@ -110,8 +113,20 @@ tooling, module support, admin operations, and the real test evidence all land.
   `chinook` and `northwind` fixtures, with comparison policies that gate row
   shape, column shape, timing regressions through ratio-plus-delta
   thresholds, and optional plan drift.
+- A one-command benchmark gate that runs all selected benchmark targets
+  against their committed snapshots and exits non-zero on regression.
+- A policy-driven CI smoke gate with machine-readable JSON output so future
+  automation can consume a stable benchmark result contract.
+- A broader CI candidate policy that keeps the hosted-calibration surface
+  small by selecting one representative scenario for `employee`, `chinook`,
+  and `northwind` instead of forcing every stored benchmark query into the
+  first automation pass.
+- A dedicated tuning report that turns gate or comparison drift into a concrete
+  investigation checklist for result-shape changes, plan drift, and
+  timing-only regressions.
 - A repo-local benchmark workflow guide under `benchmarks/` that describes how
-  to compare a fresh run, inspect drift, and refresh an accepted baseline.
+  to compare a fresh run, inspect drift, investigate a failure, and refresh an
+  accepted baseline.
 - Live monitoring proofs on temporary restored databases so attachment and
   transaction counts stay isolated and deterministic on this machine.
 
@@ -127,12 +142,15 @@ tooling, module support, admin operations, and the real test evidence all land.
   adapter still does not claim true user-facing mid-flight async cancellation.
   The live proof says the same-isolate `raise` path reports `nothing to
   cancel`; a real async control plane is still a later feature.
-- Benchmark comparison is currently a repo-local workflow on the converted
-  fixtures. It does not yet run as automated CI gating, and the default local
-  timing budgets are intentionally looser than a strict 10% threshold because
-  these shared converted fixtures show repeatable jitter on this machine even
-  when row shape and plans stay stable. The current policy therefore combines
-  ratio checks with small absolute-drift floors instead of pretending every
+- The repo now has a one-command local benchmark gate over the stored
+  snapshots, a policy-driven CI smoke gate over `employee.fdb`, and a broader
+  candidate policy that exercises one calibrated scenario on each supported
+  benchmark database. Those policies are still repo-local workflows rather
+  than committed hosted CI or release gates. The default timing budgets are
+  intentionally looser than a strict 10% threshold because these shared
+  converted fixtures show repeatable jitter on this machine even when row
+  shape and plans stay stable. The current policy therefore combines ratio
+  checks with small absolute-drift floors instead of pretending every
   few-millisecond wobble is a real regression.
 
 ## Test Commands
@@ -176,6 +194,14 @@ copy instead.
   - `/Users/worajedt/GitHub/FireDart/firebirdpod/tool/firebird_serverpod_sample_database_report.dart`
 - Benchmark baseline report tool:
   - `/Users/worajedt/GitHub/FireDart/firebirdpod/tool/firebird_benchmark_report.dart`
+- Benchmark gate tool:
+  - `/Users/worajedt/GitHub/FireDart/firebirdpod/tool/firebird_benchmark_gate.dart`
+- Benchmark CI smoke gate tool:
+  - `/Users/worajedt/GitHub/FireDart/firebirdpod/tool/firebird_benchmark_ci_gate.dart`
+- Benchmark CI policy files:
+  - `/Users/worajedt/GitHub/FireDart/firebirdpod/benchmarks/policies/`
+- Benchmark tuning report tool:
+  - `/Users/worajedt/GitHub/FireDart/firebirdpod/tool/firebird_benchmark_tuning_report.dart`
 - Benchmark workflow and stored baselines:
   - `/Users/worajedt/GitHub/FireDart/firebirdpod/benchmarks/`
 - Main project docs workspace:

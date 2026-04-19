@@ -1,14 +1,16 @@
 # Native Fixture Package
 
-This folder defines the curated Firebird-native direction for the example databases used by `firebirdpod`.
+This folder defines the curated Firebird-native direction for the example
+databases used by `firebirdpod`.
 
 ## Purpose
 
 - Keep raw converted fixtures for regression and compatibility testing
-- Define Firebird-native variants for better schema design, Serverpod integration, and operational realism
+- Define Firebird-native variants for better schema design, Serverpod
+  integration, and operational realism
 - Keep a clear separation between the converted fixtures used by the current
-  Phase 05 benchmark baselines and the curated native outputs that drive
-  Firebird-native schema design work
+  Phase 05 benchmark baselines and CI-candidate policies, and the curated
+  native outputs that drive Firebird-native schema design work
 
 ## Layout
 
@@ -23,7 +25,8 @@ This folder defines the curated Firebird-native direction for the example databa
 - `sakila_master/`
   - native schema charter and blueprint
 - `../tools/build_native_fixtures.py`
-  - executable builder that creates the curated databases from the raw Firebird fixtures
+  - executable builder that creates the curated databases from the raw
+    Firebird fixtures
 
 ## Core Rules
 
@@ -44,9 +47,10 @@ The current curated output set is:
 - `/Users/worajedt/GitHub/FireDart/databases/firebird_native/sakila_master_native.fdb`
 
 These curated outputs are still design and validation targets. The current
-benchmark snapshots under `benchmarks/` run against the shared `employee.fdb`
-proof fixture plus the converted `chinook` and `northwind` databases, not
-against these curated native builds yet.
+benchmark snapshots and repo-owned CI candidate policies under `benchmarks/`
+run against the shared `employee.fdb` proof fixture plus the converted
+`chinook` and `northwind` databases, not against these curated native builds
+yet.
 
 ## Build Command
 
@@ -76,4 +80,6 @@ Rebuild and verify one fixture:
 python3 /Users/worajedt/GitHub/FireDart/firebirdpod/tools/verify_native_fixtures.py --database sakila_master --rebuild
 ```
 
-The files in this directory now act as the design source for the generated databases, while the builder script is the executable path that turns those rules into real Firebird fixtures.
+The files in this directory now act as the design source for the generated
+databases, while the builder script is the executable path that turns those
+rules into real Firebird fixtures.

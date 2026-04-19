@@ -32,7 +32,8 @@ class FirebirdBenchmarkBudget {
           (json['maxMedianRegressionRatio'] as num?)?.toDouble() ?? 1.20,
       maxP90RegressionRatio:
           (json['maxP90RegressionRatio'] as num?)?.toDouble() ?? 1.25,
-      minMedianRegressionDelta: _durationFromMicroseconds(
+      minMedianRegressionDelta:
+          _durationFromMicroseconds(
             json['minMedianRegressionDeltaMicroseconds'] as int?,
           ) ??
           const Duration(milliseconds: 5),
@@ -51,8 +52,7 @@ class FirebirdBenchmarkBudget {
       'maxP90RegressionRatio': maxP90RegressionRatio,
       'minMedianRegressionDeltaMicroseconds':
           minMedianRegressionDelta.inMicroseconds,
-      'minP90RegressionDeltaMicroseconds':
-          minP90RegressionDelta.inMicroseconds,
+      'minP90RegressionDeltaMicroseconds': minP90RegressionDelta.inMicroseconds,
       'failOnPlanChange': failOnPlanChange,
     };
   }
@@ -142,6 +142,63 @@ class FirebirdBenchmarkSnapshot {
       'defaultBudget': defaultBudget.toJson(),
       'scenarios': scenarios.map((scenario) => scenario.toJson()).toList(),
     };
+  }
+
+  FirebirdBenchmarkSnapshot withBudget(FirebirdBenchmarkBudget budget) {
+    return FirebirdBenchmarkSnapshot(
+      formatVersion: formatVersion,
+      databaseLabel: databaseLabel,
+      recordedAt: recordedAt,
+      options: options,
+      defaultBudget: budget,
+      scenarios: scenarios
+          .map(
+            (scenario) => FirebirdBenchmarkScenarioSnapshot(
+              database: scenario.database,
+              name: scenario.name,
+              description: scenario.description,
+              tags: scenario.tags,
+              rowCount: scenario.rowCount,
+              columns: scenario.columns,
+              median: scenario.median,
+              p90: scenario.p90,
+              mean: scenario.mean,
+              minimum: scenario.minimum,
+              maximum: scenario.maximum,
+              plan: scenario.plan,
+              budget: budget,
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  FirebirdBenchmarkSnapshot selectScenarios(Iterable<String> scenarioNames) {
+    final requested = scenarioNames
+        .map((name) => name.trim())
+        .where((name) => name.isNotEmpty)
+        .toSet();
+    if (requested.isEmpty) return this;
+
+    final available = scenarios.map((scenario) => scenario.name).toSet();
+    final unknown =
+        requested.where((name) => !available.contains(name)).toList()..sort();
+    if (unknown.isNotEmpty) {
+      throw ArgumentError(
+        'Unknown snapshot scenarios for $databaseLabel: ${unknown.join(', ')}.',
+      );
+    }
+
+    return FirebirdBenchmarkSnapshot(
+      formatVersion: formatVersion,
+      databaseLabel: databaseLabel,
+      recordedAt: recordedAt,
+      options: options,
+      defaultBudget: defaultBudget,
+      scenarios: scenarios
+          .where((scenario) => requested.contains(scenario.name))
+          .toList(growable: false),
+    );
   }
 
   FirebirdBenchmarkComparison compare(FirebirdBenchmarkSuiteResult suite) {
@@ -297,6 +354,16 @@ class FirebirdBenchmarkComparison {
 
   bool get passed =>
       databaseMatches && scenarios.every((comparison) => comparison.passed);
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'databaseLabel': suite.databaseLabel,
+      'snapshotDatabaseLabel': snapshot.databaseLabel,
+      'databaseMatches': databaseMatches,
+      'passed': passed,
+      'scenarios': scenarios.map((scenario) => scenario.toJson()).toList(),
+    };
+  }
 }
 
 /// Comparison result for one scenario.
@@ -376,6 +443,25 @@ class FirebirdBenchmarkScenarioComparison {
     if (budget.failOnPlanChange && !planMatches) return 'plan-changed';
     if (!planMatches) return 'pass-with-plan-drift';
     return 'pass';
+  }
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'name': name,
+      'verdict': verdict,
+      'passed': passed,
+      'missingInCurrent': missingInCurrent,
+      'unexpectedInCurrent': unexpectedInCurrent,
+      'rowCountMatches': rowCountMatches,
+      'columnsMatch': columnsMatch,
+      'planMatches': planMatches,
+      'medianRatio': medianRatio,
+      'p90Ratio': p90Ratio,
+      'medianDeltaMicroseconds': medianDelta?.inMicroseconds,
+      'p90DeltaMicroseconds': p90Delta?.inMicroseconds,
+      'medianRegressed': medianRegressed,
+      'p90Regressed': p90Regressed,
+    };
   }
 }
 
