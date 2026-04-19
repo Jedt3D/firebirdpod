@@ -1,0 +1,75 @@
+{
+  "formatVersion": 1,
+  "databaseLabel": "northwind",
+  "recordedAt": "2026-04-19T12:08:15.509349",
+  "warmupIterations": 1,
+  "measuredIterations": 5,
+  "statementTimeoutMicroseconds": 0,
+  "defaultBudget": {
+    "maxMedianRegressionRatio": 1.2,
+    "maxP90RegressionRatio": 1.25,
+    "minMedianRegressionDeltaMicroseconds": 5000,
+    "minP90RegressionDeltaMicroseconds": 10000,
+    "failOnPlanChange": false
+  },
+  "scenarios": [
+    {
+      "database": "northwind",
+      "name": "order_rollup",
+      "description": "Order-detail revenue rollup over a representative order range.",
+      "tags": [
+        "aggregate",
+        "join",
+        "parameterized"
+      ],
+      "rowCount": 25,
+      "columns": [
+        "CustomerID",
+        "OrderID",
+        "OrderTotal"
+      ],
+      "medianMicroseconds": 13571,
+      "p90Microseconds": 18631,
+      "meanMicroseconds": 13353,
+      "minimumMicroseconds": 8913,
+      "maximumMicroseconds": 18631,
+      "plan": "Select Expression\n    -> First N Records\n        -> Sort (record length: 68, key length: 24)\n            -> Aggregate\n                -> Sort (record length: 118, key length: 40)\n                    -> Nested Loop Join (inner)\n                        -> Filter\n                            -> Table \"Orders\" as \"O\" Access By ID\n                                -> Bitmap\n                                    -> Index \"RDB$PRIMARY5\" Range Scan (lower bound: 1/1, upper bound: 1/1)\n                        -> Filter\n                            -> Table \"Order Details\" as \"OD\" Access By ID\n                                -> Bitmap\n                                    -> Index \"FK_Order_Details_d945128a6c\" Range Scan (full match)",
+      "budget": {
+        "maxMedianRegressionRatio": 1.2,
+        "maxP90RegressionRatio": 1.25,
+        "minMedianRegressionDeltaMicroseconds": 5000,
+        "minP90RegressionDeltaMicroseconds": 10000,
+        "failOnPlanChange": false
+      }
+    },
+    {
+      "database": "northwind",
+      "name": "product_sales_rollup",
+      "description": "Aggregated sales totals by product over the reporting fixture.",
+      "tags": [
+        "aggregate",
+        "reporting",
+        "parameterized"
+      ],
+      "rowCount": 20,
+      "columns": [
+        "ProductID",
+        "UnitsSold",
+        "Revenue"
+      ],
+      "medianMicroseconds": 1300859,
+      "p90Microseconds": 1369285,
+      "meanMicroseconds": 1310504,
+      "minimumMicroseconds": 1287687,
+      "maximumMicroseconds": 1369285,
+      "plan": "Select Expression\n    -> First N Records\n        -> Sort (record length: 76, key length: 32)\n            -> Aggregate\n                -> Nested Loop Join (inner)\n                    -> Filter\n                        -> Table \"Order Details\" as \"OD\" Access By ID\n                            -> Index \"FK_Order_Details_4d059fd75a\" Range Scan (lower bound: 1/1, upper bound: 1/1)\n                    -> Filter\n                        -> Table \"Orders\" as \"O\" Access By ID\n                            -> Bitmap\n                                -> Index \"RDB$PRIMARY5\" Unique Scan",
+      "budget": {
+        "maxMedianRegressionRatio": 1.2,
+        "maxP90RegressionRatio": 1.25,
+        "minMedianRegressionDeltaMicroseconds": 5000,
+        "minP90RegressionDeltaMicroseconds": 10000,
+        "failOnPlanChange": false
+      }
+    }
+  ]
+}

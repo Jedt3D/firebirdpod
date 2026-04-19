@@ -1,0 +1,77 @@
+{
+  "formatVersion": 1,
+  "databaseLabel": "employee",
+  "recordedAt": "2026-04-19T12:35:54.691280",
+  "warmupIterations": 1,
+  "measuredIterations": 5,
+  "statementTimeoutMicroseconds": 0,
+  "defaultBudget": {
+    "maxMedianRegressionRatio": 1.2,
+    "maxP90RegressionRatio": 1.25,
+    "minMedianRegressionDeltaMicroseconds": 5000,
+    "minP90RegressionDeltaMicroseconds": 10000,
+    "failOnPlanChange": false
+  },
+  "scenarios": [
+    {
+      "database": "employee",
+      "name": "employee_directory_join",
+      "description": "Employee-directory join across employee, department, and job over the main staff range.",
+      "tags": [
+        "join",
+        "directory",
+        "parameterized"
+      ],
+      "rowCount": 40,
+      "columns": [
+        "EMP_NO",
+        "FIRST_NAME",
+        "LAST_NAME",
+        "DEPARTMENT",
+        "JOB_TITLE"
+      ],
+      "medianMicroseconds": 1743,
+      "p90Microseconds": 3256,
+      "meanMicroseconds": 2043,
+      "minimumMicroseconds": 1520,
+      "maximumMicroseconds": 3256,
+      "plan": "Select Expression\n    -> First N Records\n        -> Nested Loop Join (inner)\n            -> Filter\n                -> Table \"EMPLOYEE\" as \"E\" Access By ID\n                    -> Index \"RDB$PRIMARY7\" Range Scan (lower bound: 1/1, upper bound: 1/1)\n            -> Filter\n                -> Table \"DEPARTMENT\" as \"D\" Access By ID\n                    -> Bitmap\n                        -> Index \"RDB$PRIMARY5\" Unique Scan\n            -> Filter\n                -> Table \"JOB\" as \"J\" Access By ID\n                    -> Bitmap\n                        -> Index \"RDB$PRIMARY2\" Unique Scan",
+      "budget": {
+        "maxMedianRegressionRatio": 1.2,
+        "maxP90RegressionRatio": 1.25,
+        "minMedianRegressionDeltaMicroseconds": 5000,
+        "minP90RegressionDeltaMicroseconds": 10000,
+        "failOnPlanChange": false
+      }
+    },
+    {
+      "database": "employee",
+      "name": "project_staff_rollup",
+      "description": "Project staffing rollup across employee_project, project, and employee.",
+      "tags": [
+        "aggregate",
+        "project",
+        "parameterized"
+      ],
+      "rowCount": 14,
+      "columns": [
+        "PROJ_ID",
+        "ASSIGNMENT_COUNT",
+        "FIRST_HIRE_DATE"
+      ],
+      "medianMicroseconds": 2017,
+      "p90Microseconds": 2164,
+      "meanMicroseconds": 2036,
+      "minimumMicroseconds": 1962,
+      "maximumMicroseconds": 2164,
+      "plan": "Select Expression\n    -> First N Records\n        -> Sort (record length: 60, key length: 24)\n            -> Aggregate\n                -> Nested Loop Join (inner)\n                    -> Filter\n                        -> Table \"EMPLOYEE_PROJECT\" as \"EP\" Access By ID\n                            -> Index \"RDB$FOREIGN16\" Full Scan\n                                -> Bitmap\n                                    -> Index \"RDB$FOREIGN15\" Range Scan (lower bound: 1/1, upper bound: 1/1)\n                    -> Filter\n                        -> Table \"PROJECT\" as \"P\" Access By ID\n                            -> Bitmap\n                                -> Index \"RDB$PRIMARY12\" Unique Scan\n                    -> Filter\n                        -> Table \"EMPLOYEE\" as \"E\" Access By ID\n                            -> Bitmap\n                                -> Index \"RDB$PRIMARY7\" Unique Scan",
+      "budget": {
+        "maxMedianRegressionRatio": 1.2,
+        "maxP90RegressionRatio": 1.25,
+        "minMedianRegressionDeltaMicroseconds": 5000,
+        "minP90RegressionDeltaMicroseconds": 10000,
+        "failOnPlanChange": false
+      }
+    }
+  ]
+}

@@ -135,6 +135,13 @@ class _FirebirdFbdbPrototypeStatement implements FirebirdNativeStatement {
   bool _isClosed = false;
 
   @override
+  Future<String> getPlan({bool detailed = true}) async {
+    throw UnsupportedError(
+      'The fbdb prototype client does not support query-plan inspection.',
+    );
+  }
+
+  @override
   Future<void> close() async {
     if (_isClosed) return;
     _isClosed = true;

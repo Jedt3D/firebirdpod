@@ -55,16 +55,23 @@ String firebirdTestDatabasePath() {
       '/Users/worajedt/GitHub/FireDart/databases/firebird/employee.fdb';
 }
 
+String firebirdChinookDatabasePath() {
+  return Platform.environment['FIREBIRDPOD_CHINOOK_DATABASE'] ??
+      '/Users/worajedt/GitHub/FireDart/databases/firebird/chinook.fdb';
+}
+
+String firebirdNorthwindDatabasePath() {
+  return Platform.environment['FIREBIRDPOD_NORTHWIND_DATABASE'] ??
+      '/Users/worajedt/GitHub/FireDart/databases/firebird/northwind.fdb';
+}
+
 int? _readInt(String? value) {
   if (value == null || value.isEmpty) return null;
   return int.parse(value);
 }
 
 class FirebirdTempDatabase {
-  FirebirdTempDatabase._({
-    required this.directory,
-    required this.databasePath,
-  });
+  FirebirdTempDatabase._({required this.directory, required this.databasePath});
 
   final Directory directory;
   final String databasePath;
@@ -77,9 +84,7 @@ class FirebirdTempDatabase {
     );
     await baseDirectory.create(recursive: true);
 
-    final directory = await baseDirectory.createTemp(
-      'firebirdpod_phase01_',
-    );
+    final directory = await baseDirectory.createTemp('firebirdpod_phase01_');
     final databasePath = '${directory.path}/phase01.fdb';
 
     final database = await fbdb.FbDb.createDatabase(
@@ -120,6 +125,97 @@ class FirebirdTempDatabase {
         try {
           await database.detach();
         } catch (_) {}
+      }
+    } catch (_) {
+      if (await File(databasePath).exists()) {
+        try {
+          await File(databasePath).delete();
+        } catch (_) {}
+      }
+    } finally {
+      if (await directory.exists()) {
+        try {
+          await directory.delete(recursive: true);
+        } catch (_) {}
+      }
+    }
+  }
+}
+
+class FirebirdRestoredDatabase {
+  FirebirdRestoredDatabase._({
+    required this.directory,
+    required this.backupFile,
+    required this.databasePath,
+  });
+
+  final Directory directory;
+  final String backupFile;
+  final String databasePath;
+
+  static Future<FirebirdRestoredDatabase> create({
+    String? sourceDatabasePath,
+  }) async {
+    final baseDirectory = Directory(
+      '${File(firebirdTestDatabasePath()).parent.path}/.firebirdpod_tmp',
+    );
+    await baseDirectory.create(recursive: true);
+
+    final directory = await baseDirectory.createTemp('firebirdpod_restore_');
+    final backupFile = '${directory.path}/restored_copy.fbk';
+    final databasePath = '${directory.path}/restored_copy.fdb';
+    final sourceDatabase = sourceDatabasePath ?? firebirdTestDatabasePath();
+
+    final serviceManager =
+        await FirebirdServiceManager(
+          fbClientLibraryPath: firebirdClientLibraryPath(),
+        ).attach(
+          FirebirdConnectionOptions(
+            host: Platform.environment['FIREBIRDPOD_TEST_HOST'] ?? 'localhost',
+            port: _readInt(Platform.environment['FIREBIRDPOD_TEST_PORT']),
+            database: sourceDatabase,
+            user: firebirdTestUser(),
+            password: firebirdTestPassword(),
+            charset: 'UTF8',
+          ),
+        );
+
+    try {
+      await serviceManager.backupDatabase(
+        database: sourceDatabase,
+        backupFile: backupFile,
+      );
+      await serviceManager.restoreDatabase(
+        backupFile: backupFile,
+        database: databasePath,
+      );
+    } finally {
+      await serviceManager.close();
+    }
+
+    return FirebirdRestoredDatabase._(
+      directory: directory,
+      backupFile: backupFile,
+      databasePath: databasePath,
+    );
+  }
+
+  Future<void> dispose() async {
+    try {
+      if (await File(databasePath).exists()) {
+        final database = await fbdb.FbDb.attach(
+          database: databasePath,
+          user: firebirdTestUser(),
+          password: firebirdTestPassword(),
+          options: fbdb.FbOptions(libFbClient: firebirdClientLibraryPath()),
+        );
+        try {
+          await database.dropDatabase();
+        } finally {
+          try {
+            await database.detach();
+          } catch (_) {}
+        }
       }
     } catch (_) {
       if (await File(databasePath).exists()) {

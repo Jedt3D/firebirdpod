@@ -6,6 +6,9 @@ This folder defines the curated Firebird-native direction for the example databa
 
 - Keep raw converted fixtures for regression and compatibility testing
 - Define Firebird-native variants for better schema design, Serverpod integration, and operational realism
+- Keep a clear separation between the converted fixtures used by the current
+  Phase 05 benchmark baselines and the curated native outputs that drive
+  Firebird-native schema design work
 
 ## Layout
 
@@ -39,6 +42,11 @@ The current curated output set is:
 - `/Users/worajedt/GitHub/FireDart/databases/firebird_native/chinook_native.fdb`
 - `/Users/worajedt/GitHub/FireDart/databases/firebird_native/northwind_native.fdb`
 - `/Users/worajedt/GitHub/FireDart/databases/firebird_native/sakila_master_native.fdb`
+
+These curated outputs are still design and validation targets. The current
+benchmark snapshots under `benchmarks/` run against the shared `employee.fdb`
+proof fixture plus the converted `chinook` and `northwind` databases, not
+against these curated native builds yet.
 
 ## Build Command
 

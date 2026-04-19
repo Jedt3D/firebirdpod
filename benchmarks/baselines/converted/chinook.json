@@ -1,0 +1,77 @@
+{
+  "formatVersion": 1,
+  "databaseLabel": "chinook",
+  "recordedAt": "2026-04-19T12:07:50.371192",
+  "warmupIterations": 1,
+  "measuredIterations": 5,
+  "statementTimeoutMicroseconds": 0,
+  "defaultBudget": {
+    "maxMedianRegressionRatio": 1.2,
+    "maxP90RegressionRatio": 1.25,
+    "minMedianRegressionDeltaMicroseconds": 5000,
+    "minP90RegressionDeltaMicroseconds": 10000,
+    "failOnPlanChange": false
+  },
+  "scenarios": [
+    {
+      "database": "chinook",
+      "name": "track_catalog_join",
+      "description": "Catalog join from tracks through albums to artists over most of the track table.",
+      "tags": [
+        "join",
+        "catalog",
+        "parameterized"
+      ],
+      "rowCount": 3000,
+      "columns": [
+        "TrackId",
+        "Name",
+        "Title",
+        "ArtistName"
+      ],
+      "medianMicroseconds": 9712,
+      "p90Microseconds": 14938,
+      "meanMicroseconds": 10587,
+      "minimumMicroseconds": 8972,
+      "maximumMicroseconds": 14938,
+      "plan": "Select Expression\n    -> Nested Loop Join (inner)\n        -> Filter\n            -> Table \"tracks\" as \"T\" Access By ID\n                -> Index \"RDB$PRIMARY10\" Range Scan (lower bound: 1/1, upper bound: 1/1)\n        -> Filter\n            -> Table \"albums\" as \"A\" Access By ID\n                -> Bitmap\n                    -> Index \"RDB$PRIMARY1\" Unique Scan\n        -> Filter\n            -> Table \"artists\" as \"AR\" Access By ID\n                -> Bitmap\n                    -> Index \"RDB$PRIMARY2\" Unique Scan",
+      "budget": {
+        "maxMedianRegressionRatio": 1.2,
+        "maxP90RegressionRatio": 1.25,
+        "minMedianRegressionDeltaMicroseconds": 5000,
+        "minP90RegressionDeltaMicroseconds": 10000,
+        "failOnPlanChange": false
+      }
+    },
+    {
+      "database": "chinook",
+      "name": "invoice_customer_rollup",
+      "description": "Grouped invoice-line revenue rollup by customer over the main sales catalog.",
+      "tags": [
+        "aggregate",
+        "group-by",
+        "parameterized"
+      ],
+      "rowCount": 59,
+      "columns": [
+        "CustomerId",
+        "InvoiceLineCount",
+        "UnitsPurchased",
+        "Revenue"
+      ],
+      "medianMicroseconds": 7789,
+      "p90Microseconds": 8832,
+      "meanMicroseconds": 7822,
+      "minimumMicroseconds": 6750,
+      "maximumMicroseconds": 8832,
+      "plan": "Select Expression\n    -> Sort (record length: 84, key length: 32)\n        -> Aggregate\n            -> Sort (record length: 148, key length: 12)\n                -> Filter\n                    -> Hash Join (inner)\n                        -> Nested Loop Join (inner)\n                            -> Filter\n                                -> Table \"invoice_items\" as \"II\" Access By ID\n                                    -> Bitmap\n                                        -> Index \"IFK_InvoiceLineTrackId\" Range Scan (lower bound: 1/1, upper bound: 1/1)\n                            -> Filter\n                                -> Table \"invoices\" as \"I\" Access By ID\n                                    -> Bitmap\n                                        -> Index \"RDB$PRIMARY7\" Unique Scan\n                            -> Filter\n                                -> Table \"customers\" as \"C\" Access By ID\n                                    -> Bitmap\n                                        -> Index \"RDB$PRIMARY3\" Unique Scan\n                        -> Record Buffer (record length: 33)\n                            -> Filter\n                                -> Table \"tracks\" as \"T\" Access By ID\n                                    -> Bitmap\n                                        -> Index \"RDB$PRIMARY10\" Range Scan (lower bound: 1/1, upper bound: 1/1)",
+      "budget": {
+        "maxMedianRegressionRatio": 1.2,
+        "maxP90RegressionRatio": 1.25,
+        "minMedianRegressionDeltaMicroseconds": 5000,
+        "minP90RegressionDeltaMicroseconds": 10000,
+        "failOnPlanChange": false
+      }
+    }
+  ]
+}

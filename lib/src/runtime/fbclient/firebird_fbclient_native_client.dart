@@ -489,6 +489,21 @@ class _FirebirdFbClientNativeStatement implements FirebirdNativeStatement {
   bool _isClosed = false;
 
   @override
+  Future<String> getPlan({bool detailed = true}) async {
+    _ensureOpen();
+    try {
+      _safeStatusInit(_owner.status);
+      return _statement.getPlan(_owner.status, detailed);
+    } on fbclient.FbStatusException catch (error) {
+      throw mapFbStatusException(
+        exception: error,
+        util: _owner.util,
+        operation: 'get statement plan',
+      );
+    }
+  }
+
+  @override
   Future<void> close() async {
     if (_isClosed) return;
     _isClosed = true;

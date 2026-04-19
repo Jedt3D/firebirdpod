@@ -26,6 +26,7 @@ abstract interface class FirebirdNativeConnection {
 }
 
 abstract interface class FirebirdNativeStatement {
+  Future<String> getPlan({bool detailed = true});
   Future<Duration?> getTimeout();
   Future<void> setTimeout(Duration? timeout);
   Future<FirebirdExecutionResult> execute(List<Object?> values);

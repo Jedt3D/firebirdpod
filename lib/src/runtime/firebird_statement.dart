@@ -19,6 +19,11 @@ class FirebirdStatement {
 
   bool get isClosed => _isClosed;
 
+  Future<String> getPlan({bool detailed = true}) async {
+    _ensureOpen();
+    return _nativeStatement.getPlan(detailed: detailed);
+  }
+
   Future<Duration?> getTimeout() async {
     _ensureOpen();
     return _nativeStatement.getTimeout();
@@ -32,8 +37,7 @@ class FirebirdStatement {
   Future<FirebirdExecutionResult> execute(
     FirebirdStatementParameters? parameters, {
     Duration? timeout,
-  }
-  ) async {
+  }) async {
     _ensureOpen();
     final compiled = preparedSql.bind(parameters);
     if (timeout != null) {

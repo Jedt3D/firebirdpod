@@ -17,8 +17,18 @@ tooling, module support, admin operations, and the real test evidence all land.
 - Phase 04 is complete through Slice `04F`: `serverpod_auth_core`,
   `serverpod_auth_idp`, and Firebird service-manager admin operations are all
   proven live.
-- The next major frontier is Phase 05: performance and observability, plus a
-  small set of follow-up compatibility items tracked in [TODO.md](TODO.md).
+- Phase 05 is underway through Slice `05H`: slices `05A` through `05H` are
+  complete. Typed Firebird monitoring helpers, API-backed query-plan
+  inspection, timeout diagnostics, read-consistency validation, cancellation
+  capability diagnostics, benchmark baselines, and a repo-local benchmark
+  snapshot comparison workflow are in place for live attachment, transaction,
+  statement, optimizer-plan, timeout-budget, transaction-visibility,
+  cancel-path, and query-class timing diagnostics across the shared
+  `employee.fdb` proof fixture plus the converted `chinook` and `northwind`
+  samples.
+- The next major Phase 05 frontier is turning that local evidence into a more
+  repeatable regression and tuning workflow, plus a small set of follow-up
+  compatibility items tracked in [TODO.md](TODO.md).
 
 ## What Already Works
 
@@ -71,6 +81,40 @@ tooling, module support, admin operations, and the real test evidence all land.
   destructive service-manager proofs instead of taking the shared source
   fixture offline.
 
+### Performance And Observability
+
+- Typed Firebird monitoring reads over `MON$ATTACHMENTS`,
+  `MON$TRANSACTIONS`, and `MON$STATEMENTS`.
+- Snapshot helpers for current-attachment and external-attachment monitoring
+  views.
+- Monitoring-statistics snapshots and delta helpers for attachment,
+  transaction, and statement-level Firebird I/O, record, memory, and table
+  counters.
+- One-shot legacy and detailed query-plan inspection through the direct
+  `fbclient` statement API.
+- Timeout diagnostics for connection defaults, prepared-statement overrides,
+  and observed timeout-classified executions.
+- Transaction read-consistency state capture and live visibility proofs for
+  `READ COMMITTED READ CONSISTENCY` versus `SNAPSHOT`.
+- Cancellation diagnostics that capture low-level `cancelCurrentOperation()`
+  request outcomes and post-request connection usability.
+- Live cancellation proofs that show the current same-isolate `raise` path
+  reports `nothing to cancel`, while `abort` invalidates the client
+  connection and clears monitored statements on the worker attachment.
+- A repeatable benchmark runner for the shared `employee.fdb` proof fixture
+  plus converted `chinook` and `northwind` query classes, with warmup passes,
+  measured iterations, duration statistics, and captured explained plans.
+- A runnable benchmark report tool that prints markdown-ready baselines for the
+  supported sample datasets.
+- Committed benchmark snapshots for `employee.fdb` plus the converted
+  `chinook` and `northwind` fixtures, with comparison policies that gate row
+  shape, column shape, timing regressions through ratio-plus-delta
+  thresholds, and optional plan drift.
+- A repo-local benchmark workflow guide under `benchmarks/` that describes how
+  to compare a fresh run, inspect drift, and refresh an accepted baseline.
+- Live monitoring proofs on temporary restored databases so attachment and
+  transaction counts stay isolated and deterministic on this machine.
+
 ## Current Boundaries
 
 - Pool-level Serverpod `runtimeParametersBuilder` is still intentionally
@@ -79,8 +123,17 @@ tooling, module support, admin operations, and the real test evidence all land.
   policy for it.
 - Auth indexed email and rate-limit nonce storage still use an ASCII-backed
   indexed policy to stay inside the shared test database key budget.
-- `cancelCurrentOperation()` exists as a low-level seam, but true user-facing
-  async cancellation is still a later control-plane feature.
+- `cancelCurrentOperation()` now has typed diagnostics, but the current direct
+  adapter still does not claim true user-facing mid-flight async cancellation.
+  The live proof says the same-isolate `raise` path reports `nothing to
+  cancel`; a real async control plane is still a later feature.
+- Benchmark comparison is currently a repo-local workflow on the converted
+  fixtures. It does not yet run as automated CI gating, and the default local
+  timing budgets are intentionally looser than a strict 10% threshold because
+  these shared converted fixtures show repeatable jitter on this machine even
+  when row shape and plans stay stable. The current policy therefore combines
+  ratio checks with small absolute-drift floors instead of pretending every
+  few-millisecond wobble is a real regression.
 
 ## Test Commands
 
@@ -104,9 +157,12 @@ copy instead.
   - production Firebird runtime, Serverpod integration, schema tooling, and
     admin code
 - `test/`
-  - unit and integration coverage, including live service-manager proofs
+  - unit and integration coverage for runtime, modules, admin, and
+    observability slices
+- `tool/`
+  - runnable reports and one-off developer utilities
 - `tools/`
-  - fixture and support tooling
+  - fixture builders and support tooling
 - `fixtures/native/`
   - curated native fixture blueprints and notes
 - [TODO.md](TODO.md)
@@ -118,6 +174,10 @@ copy instead.
   - `/Users/worajedt/GitHub/FireDart/firebirdpod/example/serverpod_employee_proof.dart`
 - Sample-database validation report tool:
   - `/Users/worajedt/GitHub/FireDart/firebirdpod/tool/firebird_serverpod_sample_database_report.dart`
+- Benchmark baseline report tool:
+  - `/Users/worajedt/GitHub/FireDart/firebirdpod/tool/firebird_benchmark_report.dart`
+- Benchmark workflow and stored baselines:
+  - `/Users/worajedt/GitHub/FireDart/firebirdpod/benchmarks/`
 - Main project docs workspace:
   - `/Users/worajedt/GitHub/FireDart/docs/serverpod-firebird`
 - Phase roadmap:
